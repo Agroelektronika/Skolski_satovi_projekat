@@ -4,7 +4,7 @@
   Esp32 mikrokontroler pokrece skolske satove i pali zvono u odredjenim trenucima. Komunikacija sa Android uredjajem preko WiFi za dobijanje sablona po kojem se zvoni i jos neke info. Postoje i tasteri za podesavanje satova.
   Za visoku preciznost merenja vremena koriste se 2 pristupa: povezivanje na lokalnu internet mrezu zarad dobijanja date/time informacije. Takodje vreme se meri unutrasnjim tajmerima. 
   Info sa interneta se moze koristiti za korekciju i sinhronizaciju.
-
+  Mehanizam kazaljke radi tako sto se promene stanja 2 pina (toggle). Jedanput pin1 promena na HIGH i pin2 promena na LOW, pa onda obrnuto kad bude sledeca minuta. U medjuvremenu oba pina su ugasena zbog ustede.
 
   Softver: Nemanja M.
   Hardver: Dragan M.
@@ -19,15 +19,15 @@
 using namespace std;
 
 
-#define PIN_KAZALJKA_SAT 15
-#define PIN_KAZALJA_MINUTA 16
-#define PIN_TASTER1 17
+#define PIN_KAZALJKA1 33
+#define PIN_KAZALJKA2 12
+#define PIN_TASTER1 4
 #define PIN_TASTER2 18
 #define PIN_ZVONO 19
 
 #define MAX_DUZINA 25
-#define MAX_DUZINA 25
 #define BR_POKUSAJA_POVEZIVANJA 20
+#define DEBOUNCING_INTERVAL 10000
 
 #define STATUS_OK 0   // sve je u redu
 #define STATUS_ERR_UNKNOWN_TIME 1 // neuspelo povezivanje pri paljenju sistema, ne zna vreme
@@ -62,9 +62,13 @@ uint8_t br_sekundi = 0U; // brojac prekida tajmera
 Vreme v;
 bool sinhronizovan = false;
 bool prekid_tajmera = false;
+bool prekid_tastera1 = false;
 bool prestupna_godina = false;
 uint8_t status_sistema = STATUS_ERR_UNKNOWN_TIME;   // varijabla koja govori u kom stanju se nalazi sistem
 bool povezan = false;
+bool pin1_na_low = true; // info da pamti koji pin treba da se ugasi a koji da se upali kad dodje vreme da se posalje signal kazaljki sata. U medjuvremenu su ugasena oba pina zbog ustede. Signalizacija traje x ms.
+uint8_t br_prekida_tajmera = 0U;
+uint16_t br_debouncing_taster1 = 0U;
 
 hw_timer_t* timer0 = NULL; 
 portMUX_TYPE timerMux0 = portMUX_INITIALIZER_UNLOCKED;
@@ -72,17 +76,21 @@ portMUX_TYPE timerMux0 = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE muxTaster1 = portMUX_INITIALIZER_UNLOCKED;                  //za external interrupt
 portMUX_TYPE muxTaster2 = portMUX_INITIALIZER_UNLOCKED; 
 
-void IRAM_ATTR onTimer0();
+void IRAM_ATTR onTimer0();    // prekidne rutine unutrasnjeg tajmera i spoljasnjih tastera
 void IRAM_ATTR handleExternalTaster1();
 void IRAM_ATTR handleExternalTaster2();
 void vremenski_pomak();     // na osnovnu vremenskih info (sek, min, sat...) pomera ostale vrednosti u skladu sa pravilima
 void sinhronizacija();   // povezivanje na internet server i sinhronizacija sa vremenskom zonom, korekcija akumulirane greske, jednom dnevno
+void posalji_impuls();  // postavlja stanja pinova tako da pokrene mehanizam kazaljke sata
+
+
 
 void setup() {
   // put your setup code here, to run once:
+  setCpuFrequencyMhz(80);
   Serial.begin(115200);
 
-  timer0 = timerBegin(0, 80, true);
+  timer0 = timerBegin(0, 80U, true);
   timerAttachInterrupt(timer0, &onTimer0, true);
   timerAlarmWrite(timer0, 1000000, true);     // korak od 1sek
   timerAlarmEnable(timer0);
@@ -93,6 +101,11 @@ void setup() {
   pinMode(PIN_TASTER2, INPUT_PULLUP);    //za spoljasnji prekid, taster
   attachInterrupt(digitalPinToInterrupt(PIN_TASTER2), handleExternalTaster2, RISING);
 
+  pinMode(PIN_KAZALJKA1, OUTPUT);   // 2 pina za upravljanje kazaljkama
+  digitalWrite(PIN_KAZALJKA1, LOW);
+
+  pinMode(PIN_KAZALJKA2, OUTPUT);   
+  digitalWrite(PIN_KAZALJKA2, HIGH);
 
   v.sek = 0U;
   v.min = 0U;
@@ -165,8 +178,23 @@ void loop() {
   if(prekid_tajmera){
     Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
     Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
+    if(br_prekida_tajmera > 5){
+      digitalWrite(PIN_KAZALJKA1, LOW);
+      digitalWrite(PIN_KAZALJKA2, LOW);
+      br_prekida_tajmera = 0U;
+    }
     prekid_tajmera = false;
   }
+  //Serial.println(br_debouncing_taster1);
+  if(prekid_tastera1 && br_debouncing_taster1 > DEBOUNCING_INTERVAL){
+    Serial.println("pritisak tastera 1");
+    posalji_impuls();
+    prekid_tastera1 = false;
+    br_debouncing_taster1 = 0;
+  }
+
+  br_debouncing_taster1++;
+  if(br_debouncing_taster1 > 28000) br_debouncing_taster1 = 27800;
 
 }
 
@@ -174,6 +202,7 @@ void vremenski_pomak(){
   if(v.sek >= 60U){
     v.sek = 0U;
     v.min += 1U;
+    posalji_impuls();
     if(v.min >= 60U){
       v.min = 0U;
       v.sat += 1U;
@@ -225,8 +254,8 @@ void sinhronizacija(){
   }
   if(br_pokusaja < BR_POKUSAJA_POVEZIVANJA){
     povezan = true;
+    Serial.println(WiFi.localIP());
   }
-  Serial.println(WiFi.localIP());
 
   
   struct tm timeinfo;
@@ -238,32 +267,54 @@ void sinhronizacija(){
   if(br_pokusaja >= BR_POKUSAJA_POVEZIVANJA){
     status_sistema = STATUS_WARNING_TIME_NOT_CORRECTED;
   }
+  else{
+    v.sek = timeinfo.tm_sec;      // nakon dobijenih info, osvezavanje vremena (korekcija)
+    v.min = timeinfo.tm_min;
+    v.sat = timeinfo.tm_hour;
+    v.dan = timeinfo.tm_mday;
+    v.dan_u_nedelji = timeinfo.tm_wday;
+    v.mesec = timeinfo.tm_mon + 1U;
+    v.god = timeinfo.tm_year + 1900U;
+    sinhronizovan = true;
+    status_sistema = STATUS_OK;
+  }
 
-  v.sek = timeinfo.tm_sec;      // nakon dobijenih info, osvezavanje vremena (korekcija)
-  v.min = timeinfo.tm_min;
-  v.sat = timeinfo.tm_hour;
-  v.dan = timeinfo.tm_mday;
-  v.dan_u_nedelji = timeinfo.tm_wday;
-  v.mesec = timeinfo.tm_mon + 1U;
-  v.god = timeinfo.tm_year + 1900U;
+ 
 
   Serial.println(String(v.god) + " " + String(v.mesec) + " " + String(v.dan));
   Serial.print(String(v.sat) + " " + String(v.min) + " " + String(v.sek));
   WiFi.disconnect(true);
-  sinhronizovan = true;
+  
 }
 
+void posalji_impuls(){
+  if(pin1_na_low){
+    digitalWrite(PIN_KAZALJKA1, LOW);
+    digitalWrite(PIN_KAZALJKA2, HIGH);
+    pin1_na_low = false;
+  }
+  else{
+    digitalWrite(PIN_KAZALJKA1, HIGH);
+    digitalWrite(PIN_KAZALJKA2, LOW);
+    pin1_na_low = true;
+  }
+}
 
 void IRAM_ATTR onTimer0(){
   portENTER_CRITICAL_ISR(&timerMux0);
   br_sekundi += 1;
   v.sek += 1;
   prekid_tajmera = true;
+  br_prekida_tajmera += 1;
   portEXIT_CRITICAL_ISR(&timerMux0);
 }
 
 void IRAM_ATTR handleExternalTaster1(){
   portENTER_CRITICAL_ISR(&muxTaster1);
+  
+  prekid_tastera1 = true;
+  br_debouncing_taster1 = 0;
+  
   portEXIT_CRITICAL_ISR(&muxTaster1);
 }
 
