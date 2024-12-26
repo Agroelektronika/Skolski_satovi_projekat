@@ -22,12 +22,13 @@ using namespace std;
 #define PIN_KAZALJKA1 33
 #define PIN_KAZALJKA2 12
 #define PIN_TASTER1 4
-#define PIN_TASTER2 18
+#define PIN_TASTER2 2
 #define PIN_ZVONO 19
 
 #define MAX_DUZINA 25
 #define BR_POKUSAJA_POVEZIVANJA 20
-#define DEBOUNCING_INTERVAL 10000
+#define DEBOUNCING_INTERVAL1 10000    // preciznije saltanje kazaljke, sporije, u blizini odredjene minute
+#define DEBOUNCING_INTERVAL2 1000   // brze saltanje kazaljke, za brze dostizanje odredjenog sata i minute
 
 #define STATUS_OK 0   // sve je u redu
 #define STATUS_ERR_UNKNOWN_TIME 1 // neuspelo povezivanje pri paljenju sistema, ne zna vreme
@@ -63,12 +64,16 @@ Vreme v;
 bool sinhronizovan = false;
 bool prekid_tajmera = false;
 bool prekid_tastera1 = false;
+bool prekid_tastera2 = false;
 bool prestupna_godina = false;
 uint8_t status_sistema = STATUS_ERR_UNKNOWN_TIME;   // varijabla koja govori u kom stanju se nalazi sistem
 bool povezan = false;
 bool pin1_na_low = true; // info da pamti koji pin treba da se ugasi a koji da se upali kad dodje vreme da se posalje signal kazaljki sata. U medjuvremenu su ugasena oba pina zbog ustede. Signalizacija traje x ms.
 uint8_t br_prekida_tajmera = 0U;
 uint16_t br_debouncing_taster1 = 0U;
+uint16_t br_debouncing_taster2 = 0U;
+
+int brojac_prekida = 0;
 
 hw_timer_t* timer0 = NULL; 
 portMUX_TYPE timerMux0 = portMUX_INITIALIZER_UNLOCKED;
@@ -95,11 +100,8 @@ void setup() {
   timerAlarmWrite(timer0, 1000000, true);     // korak od 1sek
   timerAlarmEnable(timer0);
 
-  pinMode(PIN_TASTER1, INPUT_PULLUP);    //za spoljasnji prekid, taster
-  attachInterrupt(digitalPinToInterrupt(PIN_TASTER1), handleExternalTaster1, RISING);
-
-  pinMode(PIN_TASTER2, INPUT_PULLUP);    //za spoljasnji prekid, taster
-  attachInterrupt(digitalPinToInterrupt(PIN_TASTER2), handleExternalTaster2, RISING);
+  pinMode(PIN_TASTER1, INPUT_PULLUP);    // tasteri na ulaznim pinovima
+  pinMode(PIN_TASTER2, INPUT_PULLUP);    //
 
   pinMode(PIN_KAZALJKA1, OUTPUT);   // 2 pina za upravljanje kazaljkama
   digitalWrite(PIN_KAZALJKA1, LOW);
@@ -186,15 +188,25 @@ void loop() {
     prekid_tajmera = false;
   }
   //Serial.println(br_debouncing_taster1);
-  if(prekid_tastera1 && br_debouncing_taster1 > DEBOUNCING_INTERVAL){
-    Serial.println("pritisak tastera 1");
+  if(digitalRead(PIN_TASTER1) == LOW && br_debouncing_taster1 > DEBOUNCING_INTERVAL1){      // polling, ispitivanje da li su tasteri pritisnuti
+    Serial.println("pritisak tastera 1");                                               // metoda prekida je onemogucena zbog suma u napajanju koje dolazi sa 220V, i izaziva prekide kad ne treba
+    brojac_prekida += 1;
     posalji_impuls();
-    prekid_tastera1 = false;
     br_debouncing_taster1 = 0;
   }
 
+ /* if(digitalRead(PIN_TASTER2) == LOW && br_debouncing_taster2 > DEBOUNCING_INTERVAL2){
+    Serial.println("pritisak tastera 2");
+    brojac_prekida += 1;
+    posalji_impuls();
+    br_debouncing_taster2 = 0;
+  }*/
+
   br_debouncing_taster1++;
   if(br_debouncing_taster1 > 28000) br_debouncing_taster1 = 27800;
+
+  br_debouncing_taster2++;
+  if(br_debouncing_taster2 > 28000) br_debouncing_taster2 = 27800;
 
 }
 
@@ -203,6 +215,7 @@ void vremenski_pomak(){
     v.sek = 0U;
     v.min += 1U;
     posalji_impuls();
+    Serial.println("Broj prekida: " + String(brojac_prekida));
     if(v.min >= 60U){
       v.min = 0U;
       v.sat += 1U;
@@ -308,10 +321,9 @@ void IRAM_ATTR onTimer0(){
   br_prekida_tajmera += 1;
   portEXIT_CRITICAL_ISR(&timerMux0);
 }
-
+/*
 void IRAM_ATTR handleExternalTaster1(){
   portENTER_CRITICAL_ISR(&muxTaster1);
-  
   prekid_tastera1 = true;
   br_debouncing_taster1 = 0;
   
@@ -320,5 +332,8 @@ void IRAM_ATTR handleExternalTaster1(){
 
 void IRAM_ATTR handleExternalTaster2(){
   portENTER_CRITICAL_ISR(&muxTaster2);
+  prekid_tastera2 = true;
+  br_debouncing_taster2 = 0;
   portEXIT_CRITICAL_ISR(&muxTaster2);
 }
+*/
