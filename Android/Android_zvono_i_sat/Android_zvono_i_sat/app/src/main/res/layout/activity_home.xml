@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:orientation="vertical"
+    android:weightSum="40"
+    >
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="0dp"
+        android:text="@string/admin"
+        android:textAllCaps="false"
+        android:textColor="@color/black"
+        android:layout_gravity="center"
+        android:layout_weight="2"
+        android:id="@+id/username_txt"
+        android:textSize="20sp"
+        />
+    <ImageButton
+        android:layout_width="wrap_content"
+        android:layout_height="0dp"
+        android:id="@+id/imgBtnWifi"
+        android:layout_weight="3"
+        android:scaleType="centerInside"
+        android:adjustViewBounds="true"
+        android:layout_gravity="center"
+        android:src="@drawable/wifi" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="0dp"
+        android:text="@string/Kontrole"
+        android:textAllCaps="false"
+        android:layout_marginStart="10sp"
+        android:textColor="@color/black"
+        android:textStyle="bold"
+        android:layout_weight="2"
+        android:id="@+id/kontrole_txt"
+        android:textSize="20sp"
+        />
+
+    <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="3"
+        xmlns:tools="http://schemas.android.com/tools"
+        android:orientation="horizontal"
+        android:weightSum="20"
+        >
+
+        <ImageButton
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:id="@+id/imgBtnBell"
+            android:layout_weight="6"
+            android:layout_marginStart="10sp"
+            android:scaleType="centerInside"
+            android:adjustViewBounds="true"
+            android:layout_gravity="center"
+            android:src="@drawable/bell" />
+
+    <Button
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:id="@+id/btnDijagnostika"
+        android:layout_weight="7"
+        android:backgroundTint="@color/white"
+        android:textColor="@color/black"
+        android:layout_marginStart="10sp"
+        android:textSize="20sp"
+        style="@style/Widget.MaterialComponents.Button"
+        android:text="@string/Proveri"/>
+
+    <Button
+        android:layout_width="5dp"
+        android:layout_height="match_parent"
+        android:id="@+id/btnRezDijagnostike"
+        android:layout_weight="2"
+        android:backgroundTint="@color/white"
+        android:layout_marginStart="20sp"
+        style="@style/Widget.MaterialComponents.Button"
+        />
+
+    </LinearLayout>
+
+    <Button
+        android:layout_width="wrap_content"
+        android:layout_height="0dp"
+        android:layout_weight="3"
+        android:backgroundTint="@color/white"
+        android:textColor="@color/black"
+        android:textSize="23sp"
+        style="@style/Widget.MaterialComponents.Button"
+        android:textAllCaps="false"
+        android:id="@+id/btnRasporedZvona"
+        android:layout_marginStart="10sp"
+        android:text="@string/raspored_zvona"/>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="0dp"
+        android:text="@string/namestanje_sata"
+        android:textAllCaps="false"
+        android:layout_marginStart="8sp"
+        android:textColor="@color/black"
+        android:layout_weight="2"
+        android:id="@+id/namestanje_sata_txt"
+        android:textSize="20sp"
+        />
+
+    <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="3"
+        xmlns:tools="http://schemas.android.com/tools"
+        android:orientation="horizontal"
+        android:weightSum="20"
+        >
+
+        <Button
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:id="@+id/btnPoterajZaJedan"
+            android:layout_weight="6"
+            android:backgroundTint="@color/white"
+            android:textColor="@color/black"
+            android:layout_marginStart="10sp"
+            android:textSize="20sp"
+            android:textAllCaps="false"
+            style="@style/Widget.MaterialComponents.Button"
+            android:text="@string/Plus1"/>
+
+        <Button
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:id="@+id/btnSmartTeranjeKazaljke"
+            android:layout_weight="6"
+            android:backgroundTint="@color/white"
+            android:textColor="@color/black"
+            android:layout_marginStart="20sp"
+            android:text="@string/PlusSmart"
+            style="@style/Widget.MaterialComponents.Button"
+            />
+        <EditText
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="5"
+            android:id="@+id/clock_smart"
+            android:text="00:00"
+            tools:ignore="Deprecated" />
+
+    </LinearLayout>
+
+</LinearLayout>

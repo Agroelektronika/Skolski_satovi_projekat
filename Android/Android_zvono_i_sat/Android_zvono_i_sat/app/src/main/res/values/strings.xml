@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">Аутоматско звоно и сат</string>
+    <string name="Username">admin</string>
+    <string name="Login">Улаз</string>
+    <string name="Kontrole">Контроле:</string>
+    <string name="admin">Администратор</string>
+    <string name="Pozvoni">Звоно</string>
+    <string name="Proveri">Стање</string>
+    <string name="povezi">Повежи</string>
+    <string name="raspored_zvona">Распореди звона</string>
+    <string name="namestanje_sata">Намештање сата</string>
+    <string name="Plus1">+1мин.</string>
+    <string name="PlusSmart">Auto</string>
+</resources>
