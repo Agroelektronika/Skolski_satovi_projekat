@@ -11,4 +11,9 @@
     <string name="namestanje_sata">Намештање сата</string>
     <string name="Plus1">+1мин.</string>
     <string name="PlusSmart">Auto</string>
+    <string name="sinhronizacija">Синхронизација у:</string>
+    <string name="ukljuceno_zvono">Укључено звоно</string>
+    <string name="dostupni_rasporedi_txt">Постојећи распореди</string>
+    <string name="ruter">Рутер</string>
+    <string name="uputstvo">Унети време кад треба звонити у току дана. У облику: "Х:Y" где је Х број сати, а Y број минута. Размаћи са "," без размака!</string>
 </resources>
