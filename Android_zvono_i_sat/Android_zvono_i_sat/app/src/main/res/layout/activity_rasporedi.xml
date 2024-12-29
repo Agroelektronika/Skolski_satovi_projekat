@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:orientation="vertical"
+    android:layout_marginTop="10sp"
+    android:weightSum="40"
+    >
+
+    <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="3"
+        android:orientation="horizontal"
+        android:weightSum="20"
+        >
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:text="@string/dostupni_rasporedi_txt"
+            android:textAllCaps="false"
+            android:textColor="@color/black"
+            android:layout_marginStart="10sp"
+            android:layout_weight="12"
+            android:textSize="20sp"
+            />
+
+        <ImageButton
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:id="@+id/imgBtnDodajRaspored"
+            android:layout_weight="6"
+            android:scaleType="centerInside"
+            android:adjustViewBounds="true"
+            android:layout_gravity="end"
+            android:layout_marginEnd="10sp"
+            android:layout_marginTop="10sp"
+            android:src="@drawable/add2" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/prazna1"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10sp"
+        android:layout_marginTop="20sp"
+        android:text="@string/prazna_lista_rasporeda"
+        android:textSize="18sp"
+        android:textColor="@android:color/darker_gray"
+        android:gravity="center" />
+
+    <ListView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10sp"
+        android:layout_marginTop="20sp"
+        android:id="@+id/lista"/>
+
+</LinearLayout>
+

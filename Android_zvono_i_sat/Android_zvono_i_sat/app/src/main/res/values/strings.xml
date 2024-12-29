@@ -16,4 +16,6 @@
     <string name="dostupni_rasporedi_txt">Постојећи распореди</string>
     <string name="ruter">Рутер</string>
     <string name="uputstvo">Унети време кад треба звонити у току дана. У облику: "Х:Y" где је Х број сати, а Y број минута. Размаћи са "," без размака!</string>
+    <string name="prazna_lista_zvona">Додајте звона у току дана.</string>
+    <string name="prazna_lista_rasporeda">Додајте нови распоред звона.</string>
 </resources>
