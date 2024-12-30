@@ -47,16 +47,18 @@ typedef struct{       // struktura koja opisuje vremensku odrednicu, sve info o 
 // AP - Access Point - na njega se povezuju
 // STA - Station - povezuje se na druge AP
 
-const char* ssid_AP = "SAT";     
-const char* password_AP = "123";
+const char* ssid_AP = "SAT_ESP32";     
+const char* password_AP = "12345678";
 
-char ssid_STA[MAX_DUZINA] = "123456";
-char password_STA[MAX_DUZINA] = "tisovac2";
+const char* ssid_STA = "123456";
+const char* password_STA = "tisovac2";
 
 char NTP_server[MAX_DUZINA] = "pool.ntp.org";
 const long gmtPomak = 3600U;       // Pomak u sekundama od GMT (za CET 3600)
 const int letnje_aktivno = 3600U;   // Letnje računanje vremena (ako je aktivno)
 
+WiFiClient client;
+WiFiServer server(80);
 String str_za_wifi = "";
 
 uint8_t br_sekundi = 0U; // brojac prekida tajmera
@@ -91,11 +93,11 @@ void posalji_impuls();  // postavlja stanja pinova tako da pokrene mehanizam kaz
 
 
 void setup() {
-  // put your setup code here, to run once:
-  setCpuFrequencyMhz(80);
+
+  setCpuFrequencyMhz(80);   // najniza brzina radnog takta
   Serial.begin(115200);
 
-  timer0 = timerBegin(0, 80U, true);
+  timer0 = timerBegin(0, 80U, true);      // inicijalizacija tajmera koji meri vreme
   timerAttachInterrupt(timer0, &onTimer0, true);
   timerAlarmWrite(timer0, 1000000, true);     // korak od 1sek
   timerAlarmEnable(timer0);
@@ -118,10 +120,10 @@ void setup() {
   v.god = 2025U;
 
   WiFi.mode(WIFI_AP_STA);   // hibridni rezim - istovremeno stanica i pristupna tacka (povezuje se na druge WiFi mreze, a i drugi se mogu povezati na njenu WiFi mrezu)
-  WiFi.begin(ssid_STA, password_STA); // inicijalizacija WiFi
+  WiFi.begin(ssid_STA, password_STA); // inicijalizacija WiFi kao stanice, za povezivanje na druge WiFi mreze
 
   uint8_t br_pokusaja = 0U;
-  while(WiFi.status() != WL_CONNECTED && br_pokusaja < BR_POKUSAJA_POVEZIVANJA){   // povezivanje na WiFi mrezu (koja ima internet)
+  while(WiFi.status() != WL_CONNECTED && br_pokusaja < BR_POKUSAJA_POVEZIVANJA){   // povezivanje na WiFi mrezu (koja ima internet), konacan broj puta, ako je neuspesno, izadji
     Serial.write(".");
     br_pokusaja += 1U;
     delay(500);
@@ -129,15 +131,10 @@ void setup() {
   if(br_pokusaja < BR_POKUSAJA_POVEZIVANJA){
     povezan = true;
   }
-  Serial.println(WiFi.localIP());
-  WiFi.softAP(ssid_AP, password_AP);  // inicijalizacija sopstvene WiFi mreze
+  Serial.println(WiFi.localIP()); // IP od rutera
 
-  delay(1000U);
+  configTime(gmtPomak, letnje_aktivno, NTP_server); // podesavanje vremena
 
-  
-  configTime(gmtPomak, letnje_aktivno, NTP_server);
-
-  
   struct tm timeinfo;
   if(povezan)br_pokusaja = 0U;
   while (!getLocalTime(&timeinfo) && br_pokusaja < BR_POKUSAJA_POVEZIVANJA && povezan) {    // slanje zahteva ka internet serveru koji daje date/time
@@ -148,6 +145,17 @@ void setup() {
   }
   br_pokusaja = 0U;
 
+  WiFi.disconnect(true);      // prekidanje veze sa ruterom kad se dobije potreban podatak
+  delay(500);
+
+  if (WiFi.softAP(ssid_AP, password_AP)) {  // inicijalizacija sopstvene WiFi mreze
+      Serial.println("kreirana mreza");
+  }  
+  server.begin();     // pokretanje mreze
+
+  delay(500U);
+
+      // prepisivanje dobijenog sadrzaja sa internet servera koji daje datum/vreme
   v.sek = timeinfo.tm_sec;
   v.min = timeinfo.tm_min;
   v.sat = timeinfo.tm_hour;
@@ -159,15 +167,31 @@ void setup() {
   Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
   Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
 
-  v.min = 29;
-  v.sat = 6;
-  v.sek = 50;
-  WiFi.disconnect(true);
-
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
+
+
+  if(!client)client = server.available();   // provera da li je neko pokusao da se poveze na mrezu od ESP32, ako jeste vraca objekat client
+  else{
+    if(client.connected()){   // provera da li je veza aktivna i validna
+      while (client.available()) {     //ako postoje podaci za citanje sa WiFi, available() vraca broj bajtova koji su primljeni od klijenta
+        String str = client.readStringUntil('.');
+        Serial.println(str);
+        delay(2);
+        String ack = "t";
+        client.println(ack);
+
+        delay(2);
+
+      }
+    }
+    else{
+      client.stop();      // ako je doslo do prekida veze,da se sacuva ovaj objekat, da ne bude u zaglavljenom stanju
+      client = WiFiClient();    // reset klijenta
+      Serial.println("Klijent prekinuo vezu");
+    }
+  }
 
   vremenski_pomak();
   if(v.sat == 6U && v.min == 30U && !sinhronizovan){
@@ -181,7 +205,7 @@ void loop() {
     Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
     Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
     if(br_prekida_tajmera > 5){
-      digitalWrite(PIN_KAZALJKA1, LOW);
+      digitalWrite(PIN_KAZALJKA1, LOW);   // nakon kraceg intervala od pocetka minute, oba pina staviti na LOW zbog ustede
       digitalWrite(PIN_KAZALJKA2, LOW);
       br_prekida_tajmera = 0U;
     }
