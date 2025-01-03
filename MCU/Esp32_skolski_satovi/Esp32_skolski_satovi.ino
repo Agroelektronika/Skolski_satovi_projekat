@@ -5,6 +5,7 @@
   Za visoku preciznost merenja vremena koriste se 2 pristupa: povezivanje na lokalnu internet mrezu zarad dobijanja date/time informacije. Takodje vreme se meri unutrasnjim tajmerima. 
   Info sa interneta se moze koristiti za korekciju i sinhronizaciju.
   Mehanizam kazaljke radi tako sto se promene stanja 2 pina (toggle). Jedanput pin1 promena na HIGH i pin2 promena na LOW, pa onda obrnuto kad bude sledeca minuta. U medjuvremenu oba pina su ugasena zbog ustede.
+  Postoji i 1 taster za zujalicu i 1 taster za resetovanje svih rasporeda. Rasporedi zvona se dobijaju od Androida. Ako je ukljuceno, automatski se ukljucuje zvono u odredjenin trenucima.
 
   Softver: Nemanja M.
   Hardver: Dragan M.
@@ -15,6 +16,9 @@
 #include <WiFi.h>
 #include <string>
 #include <time.h>
+#include <map>
+#include <vector>
+#include <iterator>
 
 using namespace std;
 
@@ -23,7 +27,7 @@ using namespace std;
 #define PIN_KAZALJKA2 12
 #define PIN_TASTER1 4
 #define PIN_TASTER2 2
-#define PIN_ZVONO 19
+#define PIN_ZVONO 13
 
 #define MAX_DUZINA 25
 #define BR_POKUSAJA_POVEZIVANJA 20
@@ -50,8 +54,8 @@ typedef struct{       // struktura koja opisuje vremensku odrednicu, sve info o 
 const char* ssid_AP = "SAT_ESP32";     
 const char* password_AP = "12345678";
 
-const char* ssid_STA = "123456";
-const char* password_STA = "tisovac2";
+char ssid_STA[MAX_DUZINA] = "123456";
+char password_STA[MAX_DUZINA] = "tisovac2";
 
 char NTP_server[MAX_DUZINA] = "pool.ntp.org";
 const long gmtPomak = 3600U;       // Pomak u sekundama od GMT (za CET 3600)
@@ -75,6 +79,15 @@ uint8_t br_prekida_tajmera = 0U;
 uint16_t br_debouncing_taster1 = 0U;
 uint16_t br_debouncing_taster2 = 0U;
 
+uint8_t sinhronizacija_sati = 6;    // vreme sinhronizacije sa sistemskim vremenom, preko interneta
+uint8_t sinhronizacija_min = 30;
+bool ukljuceno_automatsko_zvono = true;
+
+std::map<uint8_t, uint8_t> raspored_zvona; // spisak svih trenutaka kad treba zvoniti
+
+vector<uint8_t> raspored_zvona_sati;    // spisak svih sati kad treba zvoniti
+vector<uint8_t> raspored_zvona_min;   // spisak svih minuta kad treba zvoniti (uslov da zvoni jeste da se poklapa i sat i minuta sa trenutnim vremenom)
+
 int brojac_prekida = 0;
 
 hw_timer_t* timer0 = NULL; 
@@ -88,9 +101,13 @@ void IRAM_ATTR handleExternalTaster1();
 void IRAM_ATTR handleExternalTaster2();
 void vremenski_pomak();     // na osnovnu vremenskih info (sek, min, sat...) pomera ostale vrednosti u skladu sa pravilima
 void sinhronizacija();   // povezivanje na internet server i sinhronizacija sa vremenskom zonom, korekcija akumulirane greske, jednom dnevno
-void posalji_impuls();  // postavlja stanja pinova tako da pokrene mehanizam kazaljke sata
-
-
+void posalji_impuls_kazaljka();  // postavlja stanja pinova tako da pokrene mehanizam kazaljke sata
+void upali_zvono();       // postavlja stanje pina tako da upali zvono
+void posalji_stanje_WiFi();      // salje preko WiFi stanje Android uredjaju
+void automatsko_podesavanje_sata(uint8_t sati, uint8_t min);    // automatsko podesavanje sata, prima vreme koje je na satu (sat je stao) i automatski ga podesava na trenutno
+void obrada_stringa(String str);  // parsiranje primljenog stringa preko WiFi
+void provera_string_sati(String str, uint8_t* sati, uint8_t* min);
+void provera_string_ruter(String str, char ssid[], char password[]);
 
 void setup() {
 
@@ -178,6 +195,7 @@ void loop() {
       while (client.available()) {     //ako postoje podaci za citanje sa WiFi, available() vraca broj bajtova koji su primljeni od klijenta
         String str = client.readStringUntil('.');
         Serial.println(str);
+        obrada_stringa(str);
         delay(2);
         String ack = "t";
         client.println(ack);
@@ -202,8 +220,8 @@ void loop() {
   }
   
   if(prekid_tajmera){
-    Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
-    Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
+   // Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
+   // Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
     if(br_prekida_tajmera > 5){
       digitalWrite(PIN_KAZALJKA1, LOW);   // nakon kraceg intervala od pocetka minute, oba pina staviti na LOW zbog ustede
       digitalWrite(PIN_KAZALJKA2, LOW);
@@ -215,7 +233,7 @@ void loop() {
   if(digitalRead(PIN_TASTER1) == LOW && br_debouncing_taster1 > DEBOUNCING_INTERVAL1){      // polling, ispitivanje da li su tasteri pritisnuti
     Serial.println("pritisak tastera 1");                                               // metoda prekida je onemogucena zbog suma u napajanju koje dolazi sa 220V, i izaziva prekide kad ne treba
     brojac_prekida += 1;
-    posalji_impuls();
+    posalji_impuls_kazaljka();
     br_debouncing_taster1 = 0;
   }
 
@@ -238,8 +256,8 @@ void vremenski_pomak(){
   if(v.sek >= 60U){
     v.sek = 0U;
     v.min += 1U;
-    posalji_impuls();
-    Serial.println("Broj prekida: " + String(brojac_prekida));
+    posalji_impuls_kazaljka();
+   // Serial.println("Broj prekida: " + String(brojac_prekida));
     if(v.min >= 60U){
       v.min = 0U;
       v.sat += 1U;
@@ -324,7 +342,7 @@ void sinhronizacija(){
   
 }
 
-void posalji_impuls(){
+void posalji_impuls_kazaljka(){
   if(pin1_na_low){
     digitalWrite(PIN_KAZALJKA1, LOW);
     digitalWrite(PIN_KAZALJKA2, HIGH);
@@ -336,6 +354,139 @@ void posalji_impuls(){
     pin1_na_low = true;
   }
 }
+
+void upali_zvono(){
+
+}
+void posalji_stanje_WiFi(){
+
+}
+
+void automatsko_podesavanje_sata(uint8_t sati, uint8_t min){
+
+}
+
+void provera_string_sati(String str, uint8_t* sati, uint8_t* min){
+    String sati_str = "";
+    String min_str = "";
+    int indeks_delimitera = 0;
+    indeks_delimitera = str.charAt(':');
+    for(int i = 1; i < indeks_delimitera; i++){
+      sati_str += str[i];
+    }
+    for(int i = indeks_delimitera + 1; i < str.length(); i++){
+      min_str += str[i];
+    }
+
+    *sati = (uint8_t)sati_str.toInt();
+    *min = (uint8_t)min_str.toInt();
+}
+void provera_string_ruter(String str, char ssid[], char password[]){
+    
+    int indeks_delimitera = 0;
+    indeks_delimitera = str.charAt(':');
+    int j = 0;
+    for(int i = 1; i < indeks_delimitera; i++, j++){
+      ssid[j] = str[i];
+    }
+    j = 0;
+    for(int i = indeks_delimitera + 1; i < str.length(); i++, j++){
+      password[j] = str[i];
+    }
+}
+
+void obrada_stringa(String str){
+  if(str[0] == 'a'){
+    upali_zvono();
+  }
+  else if(str[0] == 'b'){
+    posalji_stanje_WiFi();
+  }
+  else if(str[0] == 'c'){
+    posalji_impuls_kazaljka();
+  }
+  else if(str[0] == 'd'){
+    uint8_t sati = 0;
+    uint8_t min = 0;
+    provera_string_sati(str, &sati, &min);
+    automatsko_podesavanje_sata(sati, min);
+  }
+  else if(str[0] == 'e'){
+    uint8_t sati = 0;
+    uint8_t min = 0;
+    provera_string_sati(str, &sati, &min);
+    sinhronizacija_sati = sati;
+    sinhronizacija_min = min;
+  }
+  else if(str[0] == 'f'){
+    provera_string_ruter(str, ssid_STA, password_STA);
+  }
+  else if(str[0] == 'g'){
+    if(str[1] == '0'){
+      ukljuceno_automatsko_zvono = false;
+    }
+    else if(str[1] == '1'){
+      ukljuceno_automatsko_zvono = true;
+    }
+  }
+  else if(str[0] == 'h'){
+      char delimiter_zvona = '_';
+      char delimiter_sat_min = ':';
+
+      raspored_zvona_sati.clear();
+      raspored_zvona_min.clear();
+
+      raspored_zvona.clear();
+
+      int i = 1;
+      bool odradjen_sat = false;
+      String sat_str = "";
+      String min_str = "";
+      uint8_t sat = 0;
+      uint8_t min = 0;
+      while(i < str.length()){
+        int j = 0;
+        
+        while(str[i] != ':' && !odradjen_sat){
+          sat_str += str[i];
+          i += 1;
+        }
+        i += 1;
+        odradjen_sat = true;
+        sat = (uint8_t)sat_str.toInt();
+        raspored_zvona_sati.push_back(sat);
+        while(str[i] != '_' && odradjen_sat){
+          min_str += str[i];
+          i += 1;
+        }
+
+        odradjen_sat = false;
+        
+        min = (uint8_t)min_str.toInt();
+        raspored_zvona_min.push_back(min);
+        raspored_zvona[sat] = min;
+        sat_str = "";
+        min_str = "";
+        i += 1;
+      }
+      vector<uint8_t>::iterator it;
+      for(it = raspored_zvona_sati.begin(); it != raspored_zvona_sati.end(); it++){
+        Serial.println(*it);
+      }
+      for(it = raspored_zvona_min.begin(); it != raspored_zvona_min.end(); it++){
+        Serial.println(*it);
+      }
+      
+      
+
+      
+    }
+  }
+
+
+
+  
+
 
 void IRAM_ATTR onTimer0(){
   portENTER_CRITICAL_ISR(&timerMux0);
