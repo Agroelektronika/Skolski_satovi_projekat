@@ -24,7 +24,7 @@
             android:textColor="@color/black"
             android:layout_marginStart="10sp"
             android:layout_weight="12"
-            android:textSize="20sp"
+            android:textSize="14sp"
             />
 
         <ImageButton
@@ -47,7 +47,7 @@
         android:layout_marginStart="10sp"
         android:layout_marginTop="20sp"
         android:text="@string/prazna_lista_rasporeda"
-        android:textSize="18sp"
+        android:textSize="14sp"
         android:textColor="@android:color/darker_gray"
         android:gravity="center" />
 
@@ -55,7 +55,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginStart="10sp"
-        android:layout_marginTop="20sp"
+        android:layout_marginTop="30sp"
         android:id="@+id/lista"/>
 
 </LinearLayout>

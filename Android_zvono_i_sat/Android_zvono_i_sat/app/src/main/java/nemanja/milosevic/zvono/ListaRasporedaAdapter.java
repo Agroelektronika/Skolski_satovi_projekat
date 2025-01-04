@@ -4,11 +4,13 @@ import static androidx.core.content.ContextCompat.startActivity;
 
 import static nemanja.milosevic.zvono.GlobalnaKlasa.aktivan_raspored;
 import static nemanja.milosevic.zvono.GlobalnaKlasa.db;
+import static nemanja.milosevic.zvono.GlobalnaKlasa.dbHelper;
 import static nemanja.milosevic.zvono.GlobalnaKlasa.upisi_u_memoriju;
 
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.view.LayoutInflater;
@@ -17,7 +19,9 @@ import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.ImageButton;
 import android.widget.TextView;
+import android.widget.Toast;
 
+import java.io.IOException;
 import java.util.ArrayList;
 
 public class ListaRasporedaAdapter extends BaseAdapter {
@@ -55,6 +59,7 @@ public class ListaRasporedaAdapter extends BaseAdapter {
     @Override
     public View getView(int position, View convertView, ViewGroup parent) {
         View view = convertView;
+        Mreza mreza = Mreza.Instanca(kontekst);
         if(view == null){ //ako nije popunjen red, znaci da treba naduvati layout od nekog elementa
             LayoutInflater inflater = (LayoutInflater) kontekst.getSystemService(Context.LAYOUT_INFLATER_SERVICE);   //trazenje servisa od OS za naduvavanje layout-a od elementa u listu
             view = inflater.inflate(R.layout.lista_rasporeda_element, null);  // naduvavanje tj. smestanje layout-a od elementa u listu
@@ -77,9 +82,54 @@ public class ListaRasporedaAdapter extends BaseAdapter {
         imgBtnPosalji.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                //GlobalnaKlasa.aktivan_raspored = element.getIme();
-                //upisi_u_memoriju("aktivan_raspored", aktivan_raspored, kontekst);
-                //ime_txt.setTypeface(null, Typeface.BOLD);
+                dbHelper = new BazaPodataka.Database(kontekst); // inicijalizacija baze
+                db = dbHelper.getReadableDatabase();
+                String[] kolone = {"kategorija", "ime"}; //spisak kolona koje su u SQL upitu ( koje treba procitati ) - COLUMN
+                String slanje = "h";
+                Cursor cursor = db.query("Zvona",   //tabela
+                        kolone,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null);
+
+
+                while (cursor.moveToNext()){    //iteriranje kroz tabelu dobijenu upitom
+                    String kategorijaa = cursor.getString(cursor.getColumnIndexOrThrow("kategorija"));
+                    String ime = cursor.getString(cursor.getColumnIndexOrThrow("ime"));
+                    if(kategorijaa.equals(element.getIme())) {
+                        slanje += ime;
+                        slanje += '_';
+                    }
+                }
+                slanje += ".";
+
+                cursor.close();
+                if(mreza.povezan){
+                    if(GlobalnaKlasa.ukljucenoZvono) {
+                        String finalSlanje = slanje;
+                        new Thread(() -> {  // sve mrezne operacije u pozadinskoj niti
+                            try {
+                                if (mreza.socketWiFi == null || mreza.socketWiFi.isClosed() || !mreza.socketWiFi.isConnected()) {
+                                    mreza.poveziWiFi(); // Ponovno povezivanje
+                                }
+                                mreza.outputStream.write(finalSlanje.getBytes());
+                                mreza.outputStream.flush();
+                                aktivan_raspored = element.getIme();
+                                upisi_u_memoriju("aktivan_raspored", aktivan_raspored, kontekst);
+                            } catch (IOException e) {
+                                throw new RuntimeException(e);
+                            }
+                        }).start();
+                    }
+                    else{
+                        Toast.makeText(kontekst, "Неуспешно. Искључено звоно.", Toast.LENGTH_SHORT).show();
+                    }
+                }
+                else{
+                    Toast.makeText(kontekst, "Неуспешно", Toast.LENGTH_SHORT).show();
+                }
             }
         });
         imgBtnObrisi.setOnClickListener(new View.OnClickListener() {

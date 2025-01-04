@@ -2,7 +2,9 @@ package nemanja.milosevic.zvono;
 
 import static nemanja.milosevic.zvono.GlobalnaKlasa.db;
 import static nemanja.milosevic.zvono.GlobalnaKlasa.dbHelper;
+import static nemanja.milosevic.zvono.GlobalnaKlasa.preference;
 import static nemanja.milosevic.zvono.GlobalnaKlasa.ucitaj_iz_memorije;
+import static nemanja.milosevic.zvono.GlobalnaKlasa.upisi_u_memoriju;
 
 import android.content.DialogInterface;
 import android.content.Intent;
@@ -55,6 +57,7 @@ public class Rasporedi extends AppCompatActivity {
             public void onClick(DialogInterface dialog, int which) {
                 try {
                     unos = input1.getText().toString();
+
                     adapter.dodajElement(new ElementListeRasporeda(unos, false));
                     db.execSQL("INSERT INTO Rasporedi Values('" + unos + "')");
                     adapter.notifyDataSetChanged();
@@ -90,8 +93,18 @@ public class Rasporedi extends AppCompatActivity {
         GlobalnaKlasa.aktivan_raspored = ucitaj_iz_memorije("aktivan_raspored", Rasporedi.this);
         dbHelper = new BazaPodataka.Database(Rasporedi.this); // inicijalizacija baze
         db = dbHelper.getReadableDatabase();
+        boolean prvi_put = true;
+        String rez_s = ucitaj_iz_memorije("prvi_put_rasporedi", this);
+        if(!rez_s.equals(""))
+            prvi_put = Boolean.parseBoolean(rez_s);
+        else
+            prvi_put = true;
         //dbHelper.obrisi_tabelu_rasporeda_zvona(db);
-        //dbHelper.napravi_tabelu_rasporedi_zvona(db);
+        if(prvi_put) {
+            dbHelper.napravi_tabelu_rasporedi_zvona(db);
+            prvi_put = false;
+            upisi_u_memoriju("prvi_put_rasporedi", Boolean.toString(prvi_put), this);
+        }
         String[] kolone = {"ime"}; //spisak kolona koje su u SQL upitu ( koje treba procitati ) - COLUMN
 
         Cursor cursor = db.query("Rasporedi",   //tabela

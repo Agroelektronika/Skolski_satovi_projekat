@@ -2,6 +2,9 @@ package nemanja.milosevic.zvono;
 
 import static nemanja.milosevic.zvono.GlobalnaKlasa.db;
 import static nemanja.milosevic.zvono.GlobalnaKlasa.dbHelper;
+import static nemanja.milosevic.zvono.GlobalnaKlasa.provera_stringa_sat;
+import static nemanja.milosevic.zvono.GlobalnaKlasa.ucitaj_iz_memorije;
+import static nemanja.milosevic.zvono.GlobalnaKlasa.upisi_u_memoriju;
 
 import android.content.DialogInterface;
 import android.content.Intent;
@@ -18,6 +21,7 @@ import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.activity.EdgeToEdge;
 import androidx.appcompat.app.AlertDialog;
@@ -53,9 +57,14 @@ public class OdabirRasporedaZvona extends AppCompatActivity {
             public void onClick(DialogInterface dialog, int which) {
                 try {
                     String unos = input1.getText().toString();
-                    db.execSQL("INSERT INTO Zvona (kategorija, ime) VALUES('" + kategorija + "', '" + unos + "')");
-                    adapter.add(unos);
-                    adapter.notifyDataSetChanged();
+                    if(provera_stringa_sat(unos)) {
+                        db.execSQL("INSERT INTO Zvona (kategorija, ime) VALUES('" + kategorija + "', '" + unos + "')");
+                        adapter.add(unos);
+                        adapter.notifyDataSetChanged();
+                    }
+                    else{
+                        Toast.makeText(OdabirRasporedaZvona.this, "Неправилан унос. Унесите у облику HH:MM", Toast.LENGTH_LONG).show();
+                    }
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
@@ -94,7 +103,18 @@ public class OdabirRasporedaZvona extends AppCompatActivity {
 
         dbHelper = new BazaPodataka.Database(OdabirRasporedaZvona.this); // inicijalizacija baze
         db = dbHelper.getReadableDatabase();
-        //dbHelper.napravi_tabelu_zvona(db);
+        boolean prvi_put = true;
+        String rez_s = ucitaj_iz_memorije("prvi_put_zvona", this);
+        if(!rez_s.equals(""))
+            prvi_put = Boolean.parseBoolean(rez_s);
+        else
+            prvi_put = true;
+        //dbHelper.obrisi_tabelu_rasporeda_zvona(db);
+        if(prvi_put) {
+            dbHelper.napravi_tabelu_zvona(db);
+            prvi_put = false;
+            upisi_u_memoriju("prvi_put_zvona", Boolean.toString(prvi_put), this);
+        }
 
         String[] kolone = {"kategorija", "ime"}; //spisak kolona koje su u SQL upitu ( koje treba procitati ) - COLUMN
 
