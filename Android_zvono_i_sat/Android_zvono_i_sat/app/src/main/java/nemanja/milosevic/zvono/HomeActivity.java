@@ -199,6 +199,8 @@ public class HomeActivity extends AppCompatActivity {
                 }
                 else{
                     Toast.makeText(HomeActivity.this, "Неуспешно", Toast.LENGTH_SHORT).show();
+                    imgBtnWifi.setBackgroundColor(Color.RED);
+                    mreza.povezan = false;
                 }
             }
         });
@@ -206,7 +208,7 @@ public class HomeActivity extends AppCompatActivity {
         imgBtnStanje.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if(mreza.povezan){
+                if(mreza.povezan && mreza.socketWiFi.isConnected()){
                     new Thread(() -> {
                         String slanje = "b.";
                         try {
@@ -222,6 +224,8 @@ public class HomeActivity extends AppCompatActivity {
                 }
                 else{
                     Toast.makeText(HomeActivity.this, "Неуспешно", Toast.LENGTH_SHORT).show();
+                    imgBtnWifi.setBackgroundColor(Color.RED);
+                    mreza.povezan = false;
                 }
             }
         });
@@ -229,7 +233,7 @@ public class HomeActivity extends AppCompatActivity {
         btnPlus1.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if(mreza.povezan){
+                if(mreza.povezan && mreza.socketWiFi.isConnected()){
                     new Thread(() -> {
                         String slanje = "c.";
                         try {
@@ -245,6 +249,8 @@ public class HomeActivity extends AppCompatActivity {
                 }
                 else{
                     Toast.makeText(HomeActivity.this, "Неуспешно", Toast.LENGTH_SHORT).show();
+                    imgBtnWifi.setBackgroundColor(Color.RED);
+                    mreza.povezan = false;
                 }
             }
         });
@@ -252,7 +258,7 @@ public class HomeActivity extends AppCompatActivity {
         btnAuto.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if(mreza.povezan) {
+                if(mreza.povezan && mreza.socketWiFi.isConnected()) {
 
                     new Thread(() -> {
 
@@ -270,13 +276,20 @@ public class HomeActivity extends AppCompatActivity {
                             }
                         }
                         else{
-                            Toast.makeText(HomeActivity.this, "Неправилан унос. Унесите у облику HH:MM", Toast.LENGTH_LONG).show();
+                            runOnUiThread(new Runnable() {          //AZURIRANJE UI ELEMENATA, U GLAVNOJ NITI UI
+                                @Override
+                                public void run() {
+                                    Toast.makeText(HomeActivity.this, "Неправилан унос. Унесите у облику HH:MM", Toast.LENGTH_LONG).show();
+                                }
+                            });
                         }
                     }).start();
 
                 }
                 else{
                     Toast.makeText(HomeActivity.this, "Неуспешно", Toast.LENGTH_SHORT).show();
+                    imgBtnWifi.setBackgroundColor(Color.RED);
+                    mreza.povezan = false;
                 }
             }
         });
@@ -284,7 +297,7 @@ public class HomeActivity extends AppCompatActivity {
         imgBtnConfirm.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if(mreza.povezan) {
+                if(mreza.povezan && mreza.socketWiFi.isConnected()) {
                     new Thread(() -> {
                         String sati = sinhronizacija_vreme.getText().toString();
                         if(provera_stringa_sat(sati)) {
@@ -300,13 +313,20 @@ public class HomeActivity extends AppCompatActivity {
                                 throw new RuntimeException(e);
                             }
                         }
-                        else{
-                            Toast.makeText(HomeActivity.this, "Неправилан унос. Унесите у облику HH:MM", Toast.LENGTH_LONG).show();
+                        else {
+                            runOnUiThread(new Runnable() {          //AZURIRANJE UI ELEMENATA, U GLAVNOJ NITI UI
+                                @Override
+                                public void run() {
+                                    Toast.makeText(HomeActivity.this, "Неправилан унос. Унесите у облику HH:MM", Toast.LENGTH_LONG).show();
+                                }
+                            });
                         }
                     }).start();
                 }
                 else{
                     Toast.makeText(HomeActivity.this, "Неуспешно", Toast.LENGTH_SHORT).show();
+                    imgBtnWifi.setBackgroundColor(Color.RED);
+                    mreza.povezan = false;
                 }
             }
         });
@@ -314,7 +334,7 @@ public class HomeActivity extends AppCompatActivity {
         imgBtnConfirmRouter.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if(mreza.povezan) {
+                if(mreza.povezan && mreza.socketWiFi.isConnected()) {
                     new Thread(() -> {
                         String ssid = ssid_router.getText().toString();
                         String password = password_router.getText().toString();
@@ -334,12 +354,14 @@ public class HomeActivity extends AppCompatActivity {
                 }
                 else{
                     Toast.makeText(HomeActivity.this, "Неуспешно", Toast.LENGTH_SHORT).show();
+                    imgBtnWifi.setBackgroundColor(Color.RED);
+                    mreza.povezan = false;
                 }
             }
         });
 
         ukljuceno_zvono.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            if(mreza.povezan) {
+            if(mreza.povezan && mreza.socketWiFi.isConnected()) {
                 new Thread(() -> {
                     String slanje = "g1.";
                     if (isChecked) {
@@ -367,6 +389,8 @@ public class HomeActivity extends AppCompatActivity {
             }
             else{
                 //Toast.makeText(HomeActivity.this, "Неуспешно", Toast.LENGTH_SHORT).show();
+                imgBtnWifi.setBackgroundColor(Color.RED);
+                mreza.povezan = false;
             }
         });
 

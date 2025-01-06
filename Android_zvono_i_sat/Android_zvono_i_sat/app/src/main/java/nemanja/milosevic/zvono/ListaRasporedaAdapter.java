@@ -106,7 +106,7 @@ public class ListaRasporedaAdapter extends BaseAdapter {
                 slanje += ".";
 
                 cursor.close();
-                if(mreza.povezan){
+                if(mreza.povezan && mreza.socketWiFi.isConnected()){
                     if(GlobalnaKlasa.ukljucenoZvono) {
                         String finalSlanje = slanje;
                         new Thread(() -> {  // sve mrezne operacije u pozadinskoj niti
