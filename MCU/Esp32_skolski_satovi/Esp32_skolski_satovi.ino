@@ -16,19 +16,22 @@
 #include <WiFi.h>
 #include <string>
 #include <time.h>
-#include <map>
 #include <vector>
 #include <iterator>
 #include <EEPROM.h>
 
 using namespace std;
 
-
-#define PIN_KAZALJKA1 33
+// izlazni
+#define PIN_KAZALJKA1 33  // 2 pina za teranje kazaljki, naizmenicno menjanje njihovih stanja za pokretanje kazaljke
 #define PIN_KAZALJKA2 12
-#define PIN_TASTER1 4
-#define PIN_TASTER2 2
-#define PIN_ZVONO 13
+#define PIN_ZVONO 13    
+
+// ulazni
+#define PIN_TASTER1 4   // kazaljka napred
+#define PIN_TASTER2 26   // zvono
+#define PIN_TASTER3 15  // reset
+ 
 
 #define MAX_DUZINA 25
 #define MAX_DUZINA_SSID 32
@@ -61,7 +64,7 @@ const char* password_AP = "12345678";
 char ssid_STA[MAX_DUZINA_SSID] = "default";
 char password_STA[MAX_DUZINA_PASSWORD] = "password";
 
-char NTP_server[MAX_DUZINA] = "pool.ntp.org";
+char NTP_server[MAX_DUZINA] = "pool.ntp.org";   // internet server za primanje info o vremenu
 const long gmtPomak = 3600U;       // Pomak u sekundama od GMT (za CET 3600)
 const int letnje_aktivno = 3600U;   // Letnje računanje vremena (ako je aktivno)
 
@@ -88,23 +91,25 @@ uint8_t sinhronizacija_min = 30;
 bool ukljuceno_automatsko_zvono = true;
 bool u_toku_automatsko_podesavanje_sata = false;
 uint8_t br_min_auto_podesavanje_sata = 0U;    // broj minuta protekao od kako je pocelo automatsko podesavanje sata
-uint16_t poteraj_kazaljku_automatski = 0U;   // broj minuta za koji treba poterati kazaljku kod automatskog namestanja sata
+int16_t poteraj_kazaljku_automatski_br_min = 0;   // broj minuta za koji treba poterati kazaljku kod automatskog namestanja sata
 uint8_t br_prekida_tajmera_auto_kazaljka = 0U; // tokom automatskog namestanja sata, kazaljka bi trebalo da se pomera npr jednom u sekundi, bez prevelikog opterecenja
 
-std::map<uint8_t, uint8_t> raspored_zvona; // spisak svih trenutaka kad treba zvoniti
-
 vector<uint8_t> raspored_zvona_sati;    // spisak svih sati kad treba zvoniti
-vector<uint8_t> raspored_zvona_min;   // spisak svih minuta kad treba zvoniti (uslov da zvoni jeste da se poklapa i sat i minuta sa trenutnim vremenom)
+vector<uint8_t> raspored_zvona_min;   // spisak svih minuta kad treba zvoniti (uslov da zvoni jeste da se poklapa i sat i minuta iz oba vektora sa trenutnim vremenom)
 
 int brojac_prekida = 0;
 
 hw_timer_t* timer0 = NULL; 
 portMUX_TYPE timerMux0 = portMUX_INITIALIZER_UNLOCKED;
 
+hw_timer_t* timer1 = NULL; 
+portMUX_TYPE timerMux1 = portMUX_INITIALIZER_UNLOCKED;
+
 portMUX_TYPE muxTaster1 = portMUX_INITIALIZER_UNLOCKED;                  //za external interrupt
 portMUX_TYPE muxTaster2 = portMUX_INITIALIZER_UNLOCKED; 
 
 void IRAM_ATTR onTimer0();    // prekidne rutine unutrasnjeg tajmera i spoljasnjih tastera
+void IRAM_ATTR onTimer1();    // prekidne rutine unutrasnjeg tajmera i spoljasnjih tastera
 void IRAM_ATTR handleExternalTaster1();
 void IRAM_ATTR handleExternalTaster2();
 void vremenski_pomak();     // na osnovnu vremenskih info (sek, min, sat...) pomera ostale vrednosti u skladu sa pravilima
@@ -132,9 +137,17 @@ void setup() {
   timerAlarmWrite(timer0, 1000000, true);     // korak od 1sek
   timerAlarmEnable(timer0);
 
+  delay(150);
+
+  timer1 = timerBegin(1, 80U, true);      // inicijalizacija tajmera koji sluzi tokom automatskog namestanja sata
+  timerAttachInterrupt(timer1, &onTimer1, true);
+  timerAlarmWrite(timer1, 250000, true);     // korak od 250ms
+  timerAlarmEnable(timer1);
+
   pinMode(PIN_TASTER1, INPUT_PULLUP);    // tasteri na ulaznim pinovima
   pinMode(PIN_TASTER2, INPUT_PULLUP);    //
 
+  
   pinMode(PIN_KAZALJKA1, OUTPUT);   // 2 pina za upravljanje kazaljkama
   digitalWrite(PIN_KAZALJKA1, LOW);
 
@@ -142,7 +155,7 @@ void setup() {
   digitalWrite(PIN_KAZALJKA2, HIGH);
 
   pinMode(PIN_ZVONO, OUTPUT);   
-  digitalWrite(PIN_ZVONO, LOW);
+  digitalWrite(PIN_ZVONO, HIGH);    // HIGH je iskljuceno zvono, LOW je ukljuceno
 
   v.sek = 0U;
   v.min = 0U;
@@ -217,7 +230,7 @@ void loop() {
         obrada_stringa(str);
         delay(2);
         String ack = "t";
-        client.println(ack);
+        client.println(ack);    // obavestavanje posiljaoca da je poruka uspesno primljena
 
         delay(2);
 
@@ -231,27 +244,29 @@ void loop() {
   }
 
   vremenski_pomak();
-  if(v.sat == sinhronizacija_sati && v.min == sinhronizacija_min && !sinhronizovan){
+  if((v.sat == sinhronizacija_sati) && (v.min == sinhronizacija_min) && !sinhronizovan){
     sinhronizacija();
   }
-  else if(v.sat == sinhronizacija_sati && v.min == sinhronizacija_min + 1U && sinhronizovan){
+  else if((v.sat == sinhronizacija_sati) && (v.min == (sinhronizacija_min + 1U)) && sinhronizovan){
     sinhronizovan = false;
   }
   
-  if(prekid_tajmera){
-   // Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
-   // Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
+  if(prekid_tajmera){   // prosla 1sec
+    Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
+    Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
     if(br_prekida_tajmera > 4){
       digitalWrite(PIN_KAZALJKA1, LOW);   // nakon kraceg intervala od pocetka minute, oba pina staviti na LOW zbog ustede
       digitalWrite(PIN_KAZALJKA2, LOW);
-      digitalWrite(PIN_ZVONO, LOW);
-      br_prekida_tajmera = 0U;
-    }
-    if(br_prekida_tajmera_auto_kazaljka > 5){
-      automatsko_podesavanje_sata();
+      digitalWrite(PIN_ZVONO, HIGH);
     }
     prekid_tajmera = false;
   }
+
+  if(br_prekida_tajmera_auto_kazaljka > 1){
+      automatsko_podesavanje_sata();
+      br_prekida_tajmera_auto_kazaljka = 0U;
+  }
+
   //Serial.println(br_debouncing_taster1);
   if(digitalRead(PIN_TASTER1) == LOW && br_debouncing_taster1 > DEBOUNCING_INTERVAL1){      // polling, ispitivanje da li su tasteri pritisnuti
     Serial.println("pritisak tastera 1");                                               // metoda prekida je onemogucena zbog suma u napajanju koje dolazi sa 220V, i izaziva prekide kad ne treba
@@ -269,6 +284,8 @@ void loop() {
 
   br_debouncing_taster1++;
   if(br_debouncing_taster1 > 28000) br_debouncing_taster1 = 27800;
+  if(br_prekida_tajmera > 250) br_prekida_tajmera = 248;
+  if(br_prekida_tajmera_auto_kazaljka > 250) br_prekida_tajmera_auto_kazaljka = 248;
 
   br_debouncing_taster2++;
   if(br_debouncing_taster2 > 28000) br_debouncing_taster2 = 27800;
@@ -279,9 +296,12 @@ void vremenski_pomak(){
   if(v.sek >= 60U){
     v.sek = 0U;
     v.min += 1U;
-    posalji_impuls_kazaljka();
+    if(!u_toku_automatsko_podesavanje_sata){
+      posalji_impuls_kazaljka();
+    }
+    br_prekida_tajmera = 0U;
 
-    if(u_toku_automatsko_podesavanje_sata){
+    if(u_toku_automatsko_podesavanje_sata && poteraj_kazaljku_automatski_br_min > 0){
       br_min_auto_podesavanje_sata += 1;
     }
     
@@ -358,7 +378,7 @@ void sinhronizacija(){
 
   struct tm timeinfo;
   if(povezan)br_pokusaja = 0U;
-  while (!getLocalTime(&timeinfo) && br_pokusaja < BR_POKUSAJA_POVEZIVANJA && povezan) {    // slanje zahteva ka internet serveru koji daje date/time
+  while (!getLocalTime(&timeinfo) && (br_pokusaja < BR_POKUSAJA_POVEZIVANJA) && povezan) {    // slanje zahteva ka internet serveru koji daje date/time
     br_pokusaja += 1U;
     delay(10U);
   }
@@ -385,7 +405,7 @@ void sinhronizacija(){
 }
 
 void posalji_impuls_kazaljka(){
-  if(pin1_na_low){
+  if(pin1_na_low){      // naizmenicno menjanje stanja pinova, za pokretanje kazaljke
     digitalWrite(PIN_KAZALJKA1, LOW);
     digitalWrite(PIN_KAZALJKA2, HIGH);
     pin1_na_low = false;
@@ -398,7 +418,7 @@ void posalji_impuls_kazaljka(){
 }
 
 void upali_zvono(){
-  digitalWrite(PIN_ZVONO, HIGH);
+  digitalWrite(PIN_ZVONO, LOW);
 }
 void posalji_stanje_WiFi(){
     if(status_sistema == STATUS_OK){
@@ -413,18 +433,22 @@ void posalji_stanje_WiFi(){
 }
 
 void automatsko_podesavanje_sata(){
-  if(u_toku_automatsko_podesavanje_sata && poteraj_kazaljku_automatski > 0) {
+  if(u_toku_automatsko_podesavanje_sata && poteraj_kazaljku_automatski_br_min > 0) {
       posalji_impuls_kazaljka();
-      poteraj_kazaljku_automatski -= 1;
+      poteraj_kazaljku_automatski_br_min -= 1;
+      Serial.println(poteraj_kazaljku_automatski_br_min);
   }
-  if(u_toku_automatsko_podesavanje_sata && poteraj_kazaljku_automatski == 0){
+  if(u_toku_automatsko_podesavanje_sata && poteraj_kazaljku_automatski_br_min == 0){
     if(br_min_auto_podesavanje_sata > 0){
       posalji_impuls_kazaljka();
       br_min_auto_podesavanje_sata -= 1;
+      Serial.println(br_min_auto_podesavanje_sata);
     }
     else if(br_min_auto_podesavanje_sata == 0){
       u_toku_automatsko_podesavanje_sata = false;
+      Serial.println(br_min_auto_podesavanje_sata);
     }
+    
   }
 }
 
@@ -465,6 +489,7 @@ void provera_string_ruter(String str, char ssid[], char password[]){
 }
 
 void obrada_stringa(String str){      // obradjivanje svih ulaznih poruka
+
   if(str[0] == 'a'){        // pali zvono
     upali_zvono();
   }
@@ -482,19 +507,30 @@ void obrada_stringa(String str){      // obradjivanje svih ulaznih poruka
       blokada_sati -= 12;
     }
 
-    uint16_t vreme_zastoja_min = blokada_sati * 60 + blokada_min;
-
+    int16_t vreme_zastoja_min = (blokada_sati * 60U) + blokada_min;
+    
     uint8_t trenutno_vreme_sat = v.sat;
-    uint16_t trenutno_vreme_min = trenutno_vreme_sat * 60 + v.min;
-    uint16_t razlika_min = trenutno_vreme_min - vreme_zastoja_min;
-    if(razlika_min < 0) razlika_min * (-1);
+    if(trenutno_vreme_sat > 12){
+      trenutno_vreme_sat -= 12;
+    }
+    int16_t trenutno_vreme_min = (trenutno_vreme_sat * 60U) + v.min;
+    Serial.println("trenutno vreme min " + String(trenutno_vreme_min));
+    Serial.println("zastoj vreme min " + String(vreme_zastoja_min));
+    int16_t razlika_min = trenutno_vreme_min - vreme_zastoja_min;
+    Serial.println("razlika " + String(razlika_min));
+    if(razlika_min < 0) {
+      razlika_min *= (-1);
+    }
+    Serial.println("razlika " + String(razlika_min));
     if(trenutno_vreme_min > vreme_zastoja_min){
-        poteraj_kazaljku_automatski = razlika_min;
+        poteraj_kazaljku_automatski_br_min = razlika_min;
     }
     else{
-      poteraj_kazaljku_automatski = 720 - razlika_min;
+      poteraj_kazaljku_automatski_br_min = 720 - razlika_min; 
     }
+    Serial.println("Teraj " + String(poteraj_kazaljku_automatski_br_min));
 
+    timerAlarmEnable(timer1);
     u_toku_automatsko_podesavanje_sata = true;
   }
   else if(str[0] == 'e'){       // vreme povezivanja na internet ruter za dobijane preciznije info o trenutnom vremenu
@@ -540,7 +576,6 @@ void obrada_stringa(String str){      // obradjivanje svih ulaznih poruka
       raspored_zvona_sati.clear();
       raspored_zvona_min.clear();
 
-      raspored_zvona.clear();
 
       int i = 1;
       bool odradjen_sat = false;
@@ -568,7 +603,6 @@ void obrada_stringa(String str){      // obradjivanje svih ulaznih poruka
         
         min = (uint8_t)min_str.toInt();
         raspored_zvona_min.push_back(min);
-        raspored_zvona[sat] = min;
         sat_str = "";
         min_str = "";
         i += 1;
@@ -599,6 +633,7 @@ void obrada_stringa(String str){      // obradjivanje svih ulaznih poruka
 
 
   void ucitaj_iz_memorije(){
+    // ucitavanje iz memorije po mapi, koja je rucno sastavljena
     Serial.println("ucitavanje");
     uint8_t velicina_vektora = ocitajPodatak<uint8_t>(0);
     for(int i = 1; i < 1 + velicina_vektora; i++){
@@ -656,6 +691,7 @@ void obrada_stringa(String str){      // obradjivanje svih ulaznih poruka
   }
 
 
+
 void upisiPodatak(int adresa, int vrednost, uint8_t duzina){
     if(duzina == 1){ //1B
         EEPROM.write(adresa, vrednost);
@@ -689,6 +725,11 @@ void IRAM_ATTR onTimer0(){
   v.sek += 1;
   prekid_tajmera = true;
   br_prekida_tajmera += 1;
+  portEXIT_CRITICAL_ISR(&timerMux0);
+}
+
+void IRAM_ATTR onTimer1(){
+  portENTER_CRITICAL_ISR(&timerMux0);
   br_prekida_tajmera_auto_kazaljka += 1;
   portEXIT_CRITICAL_ISR(&timerMux0);
 }
