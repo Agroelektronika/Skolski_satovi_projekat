@@ -151,7 +151,7 @@ public class OdabirRasporedaZvona extends AppCompatActivity {
             @Override
             public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
                 String zaBrisanje = adapter.getItem(position);
-                db.execSQL("DELETE FROM Zvona WHERE ime = '" + zaBrisanje + "'");
+                db.execSQL("DELETE FROM Zvona WHERE ime = '" + zaBrisanje + "' AND kategorija = '" + kategorija + "'");
                 adapter.remove(zaBrisanje);
                 adapter.notifyDataSetChanged();
             }

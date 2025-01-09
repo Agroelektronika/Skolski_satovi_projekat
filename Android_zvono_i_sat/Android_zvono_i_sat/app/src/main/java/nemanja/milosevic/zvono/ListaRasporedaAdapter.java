@@ -82,55 +82,60 @@ public class ListaRasporedaAdapter extends BaseAdapter {
         imgBtnPosalji.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                dbHelper = new BazaPodataka.Database(kontekst); // inicijalizacija baze
-                db = dbHelper.getReadableDatabase();
-                String[] kolone = {"kategorija", "ime"}; //spisak kolona koje su u SQL upitu ( koje treba procitati ) - COLUMN
-                String slanje = "h";
-                Cursor cursor = db.query("Zvona",   //tabela
-                        kolone,
-                        null,
-                        null,
-                        null,
-                        null,
-                        null);
+                try {
 
 
-                while (cursor.moveToNext()){    //iteriranje kroz tabelu dobijenu upitom
-                    String kategorijaa = cursor.getString(cursor.getColumnIndexOrThrow("kategorija"));
-                    String ime = cursor.getString(cursor.getColumnIndexOrThrow("ime"));
-                    if(kategorijaa.equals(element.getIme())) {
-                        slanje += ime;
-                        slanje += '_';
+                    dbHelper = new BazaPodataka.Database(kontekst); // inicijalizacija baze
+                    db = dbHelper.getReadableDatabase();
+                    String[] kolone = {"kategorija", "ime"}; //spisak kolona koje su u SQL upitu ( koje treba procitati ) - COLUMN
+                    String slanje = "h";
+                    Cursor cursor = db.query("Zvona",   //tabela
+                            kolone,
+                            null,
+                            null,
+                            null,
+                            null,
+                            null);
+
+
+                    while (cursor.moveToNext()) {    //iteriranje kroz tabelu dobijenu upitom
+                        String kategorijaa = cursor.getString(cursor.getColumnIndexOrThrow("kategorija"));
+                        String ime = cursor.getString(cursor.getColumnIndexOrThrow("ime"));
+                        if (kategorijaa.equals(element.getIme())) {
+                            slanje += ime;
+                            slanje += '_';
+                        }
                     }
-                }
-                slanje += ".";
+                    slanje += ".";
 
-                cursor.close();
-                if(mreza.povezan && mreza.socketWiFi.isConnected()){
-                    if(GlobalnaKlasa.ukljucenoZvono) {
-                        String finalSlanje = slanje;
-                        new Thread(() -> {  // sve mrezne operacije u pozadinskoj niti
-                            try {
-                                if (mreza.socketWiFi == null || mreza.socketWiFi.isClosed() || !mreza.socketWiFi.isConnected()) {
-                                    mreza.poveziWiFi(); // Ponovno povezivanje
+                    cursor.close();
+                    if (mreza.povezan && mreza.socketWiFi.isConnected()) {
+                        if (GlobalnaKlasa.ukljucenoZvono) {
+                            String finalSlanje = slanje;
+                            new Thread(() -> {  // sve mrezne operacije u pozadinskoj niti
+                                try {
+                                    if (mreza.socketWiFi == null || mreza.socketWiFi.isClosed() || !mreza.socketWiFi.isConnected()) {
+                                        mreza.poveziWiFi(); // Ponovno povezivanje
+                                    }
+                                    mreza.outputStream.write(finalSlanje.getBytes());
+                                    mreza.outputStream.flush();
+                                    aktivan_raspored = element.getIme();
+                                    upisi_u_memoriju("aktivan_raspored", aktivan_raspored, kontekst);
+                                } catch (IOException e) {
+                                    throw new RuntimeException(e);
                                 }
-                                mreza.outputStream.write(finalSlanje.getBytes());
-                                mreza.outputStream.flush();
-                                aktivan_raspored = element.getIme();
-                                upisi_u_memoriju("aktivan_raspored", aktivan_raspored, kontekst);
-                            } catch (IOException e) {
-                                throw new RuntimeException(e);
-                            }
-                        }).start();
+                            }).start();
+                        } else {
+                            Toast.makeText(kontekst, "Неуспешно. Искључено звоно.", Toast.LENGTH_SHORT).show();
+                        }
                     }
-                    else{
-                        Toast.makeText(kontekst, "Неуспешно. Искључено звоно.", Toast.LENGTH_SHORT).show();
-                    }
-                }
-                else{
-                    Toast.makeText(kontekst, "Неуспешно", Toast.LENGTH_SHORT).show();
+                }catch (Exception e){
+                    e.printStackTrace();
+                    Toast.makeText(kontekst, "Прво додати звона", Toast.LENGTH_SHORT).show();
+
                 }
             }
+
         });
         imgBtnObrisi.setOnClickListener(new View.OnClickListener() {
             @Override
