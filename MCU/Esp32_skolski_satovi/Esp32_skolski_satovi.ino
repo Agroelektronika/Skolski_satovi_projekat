@@ -59,7 +59,7 @@ typedef struct{       // struktura koja opisuje vremensku odrednicu, sve info o 
 // STA - Station - povezuje se na druge AP
 
 const char* ssid_AP = "SAT_ESP32";     
-const char* password_AP = "12345678";
+const char* password_AP = "jswomvjknmc";
 
 char ssid_STA[MAX_DUZINA_SSID] = "default";
 char password_STA[MAX_DUZINA_PASSWORD] = "password";
@@ -273,6 +273,13 @@ void loop() {
     brojac_prekida += 1;
     posalji_impuls_kazaljka();
     br_debouncing_taster1 = 0;
+  }
+
+  if(digitalRead(PIN_TASTER2) == LOW && br_debouncing_taster2 > DEBOUNCING_INTERVAL1){      // polling, ispitivanje da li su tasteri pritisnuti
+    Serial.println("pritisak tastera 2");                                               // metoda prekida je onemogucena zbog suma u napajanju koje dolazi sa 220V, i izaziva prekide kad ne treba
+    upali_zvono();
+    br_prekida_tajmera = 0U;
+    br_debouncing_taster2 = 0;
   }
 
  /* if(digitalRead(PIN_TASTER2) == LOW && br_debouncing_taster2 > DEBOUNCING_INTERVAL2){
