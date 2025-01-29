@@ -132,12 +132,12 @@ void setup() {
   setCpuFrequencyMhz(80);   // najniza brzina radnog takta
   Serial.begin(115200);
   EEPROM.begin(512);
-
+/*
   timer0 = timerBegin(0, 80U, true);      // inicijalizacija tajmera koji meri vreme
   timerAttachInterrupt(timer0, &onTimer0, true);
   timerAlarmWrite(timer0, 1000000, true);     // korak od 1sek
   timerAlarmEnable(timer0);
-
+*/
   delay(150);
 
   timer1 = timerBegin(1, 80U, true);      // inicijalizacija tajmera koji sluzi tokom automatskog namestanja sata
@@ -168,7 +168,8 @@ void setup() {
 
   ucitaj_iz_memorije();
 
-  WiFi.mode(WIFI_AP_STA);   // hibridni rezim - istovremeno stanica i pristupna tacka (povezuje se na druge WiFi mreze, a i drugi se mogu povezati na njenu WiFi mrezu)
+  delay(150);
+  WiFi.mode(WIFI_STA);   // stanica, povezuje se na AP (router)
   WiFi.begin(ssid_STA, password_STA); // inicijalizacija WiFi kao stanice, za povezivanje na druge WiFi mreze
 
   uint8_t br_pokusaja = 0U;
@@ -179,10 +180,14 @@ void setup() {
   }
   if(br_pokusaja < BR_POKUSAJA_POVEZIVANJA){
     povezan = true;
+    Serial.println(WiFi.localIP()); // IP od rutera
   }
-  Serial.println(WiFi.localIP()); // IP od rutera
+  else{
+    povezan = false;
+  }
+  
   if(povezan){
-    configTime(gmtPomak, letnje_aktivno, NTP_server); // podesavanje vremena i dobijanje info sa servera, postavlja se u interni RTC
+    configTime(gmtPomak, letnje_aktivno, NTP_server); // podesavanje vremena i dobijanje info sa servera, postavlja se u interni RTC. ovo salje zahtev ka internet serveru koji daje vreme
   }
 
   struct tm timeinfo;
@@ -195,9 +200,10 @@ void setup() {
   }
   br_pokusaja = 0U;
 
-  WiFi.disconnect(true);      // prekidanje veze sa ruterom kad se dobije potreban podatak
+  WiFi.disconnect(false);      // prekidanje veze sa ruterom kad se dobije potreban podatak
   delay(500);
 
+  WiFi.mode(WIFI_AP);     // od sad radi u rezimu AP (druge stanice se povezuju na njega)
   if (WiFi.softAP(ssid_AP, password_AP)) {  // inicijalizacija sopstvene WiFi mreze
       Serial.println("kreirana mreza");
   }  
@@ -308,7 +314,7 @@ void vremenski_pomak(){
   if(/*v.sek >= 60U*/rtcTime.tm_min != v.min){
     
    // Serial.println(String(rtcTime.tm_hour) + "." + String(rtcTime.tm_min) + "." + String(rtcTime.tm_sec));
-
+   // sinhronizacija();
     v.sek = 0U;
     v.min += 1U;
     if(!u_toku_automatsko_podesavanje_sata){
@@ -389,17 +395,29 @@ void vremenski_pomak(){
 }
 
 void sinhronizacija(){
+  WiFi.mode(WIFI_STA);      // pri povezivanju na ruter, prelazi u rezim WiFi stanice
+ // WiFi.disconnect(false);
+  delay(100U);
   WiFi.begin(ssid_STA, password_STA); // inicijalizacija WiFi
   uint8_t br_pokusaja = 0U;
   while(WiFi.status() != WL_CONNECTED && br_pokusaja < BR_POKUSAJA_POVEZIVANJA){   // povezivanje na WiFi mrezu (koja ima internet)
     Serial.write(".");
     br_pokusaja += 1U;
-    delay(10U);
+    delay(500);
   }
   if(br_pokusaja < BR_POKUSAJA_POVEZIVANJA){
     povezan = true;
     Serial.println(WiFi.localIP());
   }
+  else{
+    povezan = false;
+    status_sistema = STATUS_WARNING_TIME_NOT_CORRECTED;
+  }
+
+  if(WiFi.status() == WL_CONNECTION_LOST ){
+    Serial.println("aaaaaaa");
+  }
+
   if(povezan){
     configTime(gmtPomak, letnje_aktivno, NTP_server); // slanje zahteva ka internet serveru koji daje date/time, upis u RTC
     Serial.println("s");
@@ -427,7 +445,9 @@ void sinhronizacija(){
     Serial.print(String(v.sat) + " " + String(v.min) + " " + String(v.sek));
   }
 
-  WiFi.disconnect(true);
+  WiFi.disconnect(true, true);
+  delay(100);
+  WiFi.mode(WIFI_AP);   // kad se zavrsi sinhronizacija, povratak u WiFi rezim AP
   
 }
 
