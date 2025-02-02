@@ -132,12 +132,12 @@ void setup() {
   setCpuFrequencyMhz(80);   // najniza brzina radnog takta
   Serial.begin(115200);
   EEPROM.begin(512);
-/*
-  timer0 = timerBegin(0, 80U, true);      // inicijalizacija tajmera koji meri vreme
+
+  timer0 = timerBegin(0, 80U, true);      // inicijalizacija tajmera koji meri vreme, za postavljanje stanja na pinove
   timerAttachInterrupt(timer0, &onTimer0, true);
   timerAlarmWrite(timer0, 1000000, true);     // korak od 1sek
   timerAlarmEnable(timer0);
-*/
+
   delay(150);
 
   timer1 = timerBegin(1, 80U, true);      // inicijalizacija tajmera koji sluzi tokom automatskog namestanja sata
@@ -265,7 +265,7 @@ void loop() {
     if(br_prekida_tajmera > 4){
       digitalWrite(PIN_KAZALJKA1, LOW);   // nakon kraceg intervala od pocetka minute, oba pina staviti na LOW zbog ustede
       digitalWrite(PIN_KAZALJKA2, LOW);
-      digitalWrite(PIN_ZVONO, HIGH);
+      digitalWrite(PIN_ZVONO, HIGH);    // ugasiti zvono
     }
     prekid_tajmera = false;
   }
@@ -412,10 +412,6 @@ void sinhronizacija(){
   else{
     povezan = false;
     status_sistema = STATUS_WARNING_TIME_NOT_CORRECTED;
-  }
-
-  if(WiFi.status() == WL_CONNECTION_LOST ){
-    Serial.println("aaaaaaa");
   }
 
   if(povezan){
@@ -768,10 +764,10 @@ int duzina_char_stringa(char str[]){
 
 void IRAM_ATTR onTimer0(){
   portENTER_CRITICAL_ISR(&timerMux0);
-  br_sekundi += 1;
-  v.sek += 1;
+ // br_sekundi += 1;
+ // v.sek += 1;
   prekid_tajmera = true;
-  br_prekida_tajmera += 1;
+  br_prekida_tajmera += 1U;
   portEXIT_CRITICAL_ISR(&timerMux0);
 }
 
