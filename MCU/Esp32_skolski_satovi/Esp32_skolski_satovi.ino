@@ -2,10 +2,10 @@
 
 /*
   Esp32 mikrokontroler pokrece skolske satove i pali zvono u odredjenim trenucima. Komunikacija sa Android uredjajem preko WiFi za dobijanje sablona po kojem se zvoni i jos neke info. Postoje i tasteri za podesavanje satova.
-  Za visoku preciznost merenja vremena koriste se 2 pristupa: povezivanje na lokalnu internet mrezu zarad dobijanja date/time informacije. Takodje vreme se meri unutrasnjim tajmerima (RTC). 
+  Za visoku preciznost merenja vremena koriste se 2 pristupa: povezivanje na lokalnu internet mrezu zarad dobijanja date/time informacije. Takodje vreme se meri unutrasnjim tajmerima. 
   Info sa interneta se moze koristiti za korekciju i sinhronizaciju.
   Mehanizam kazaljke radi tako sto se promene stanja 2 pina (toggle). Jedanput pin1 promena na HIGH i pin2 promena na LOW, pa onda obrnuto kad bude sledeca minuta. U medjuvremenu oba pina su ugasena zbog ustede.
-  Postoji i 1 taster za zujalicu i 1 taster za resetovanje svih rasporeda. Rasporedi zvona se dobijaju od Androida. Ako je ukljuceno, automatski se ukljucuje zvono u odredjenin trenucima.
+  Postoji i 1 taster za zujalicu i 1 taster za pomeranje kazaljke. Rasporedi zvona se dobijaju od Androida. Ako je ukljuceno, automatski se ukljucuje zvono u odredjenin trenucima.
 
   Softver: Nemanja M.
   Hardver: Dragan M.
@@ -135,7 +135,7 @@ void setup() {
 
   timer0 = timerBegin(0, 80U, true);      // inicijalizacija tajmera koji meri vreme, za postavljanje stanja na pinove
   timerAttachInterrupt(timer0, &onTimer0, true);
-  timerAlarmWrite(timer0, 1000000, true);     // korak od 1sek
+  timerAlarmWrite(timer0, 1000000, true);     // korak od 1sec
   timerAlarmEnable(timer0);
 
   delay(150);
@@ -192,11 +192,14 @@ void setup() {
 
   struct tm timeinfo;
   if(povezan)br_pokusaja = 0U;
-  while (!getLocalTime(&timeinfo) && br_pokusaja < BR_POKUSAJA_POVEZIVANJA && povezan) {    // uzimanje info iz RTC i punjenje strukture timeinfo
+  while (!getLocalTime(&timeinfo) && br_pokusaja < BR_POKUSAJA_POVEZIVANJA && povezan) {    // uzimanje info iz RTC i punjenje strukture timeinfo, nije neophodna while petlja
     br_pokusaja += 1U;
   }
   if(br_pokusaja < BR_POKUSAJA_POVEZIVANJA){
     status_sistema = STATUS_OK;
+  }
+  else{
+    status_sistema = STATUS_ERR_UNKNOWN_TIME;
   }
   br_pokusaja = 0U;
 
@@ -222,7 +225,7 @@ void setup() {
 
   Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
   Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
-  
+
 
 }
 
@@ -308,12 +311,11 @@ void loop() {
 }
 
 void vremenski_pomak(){
-  time_t now = time(nullptr);
-  localtime_r(&now, &rtcTime);
+ // time_t now = time(nullptr);   // dobijanje trenutno vreme od epohe, iz RTC timer-a
+//  localtime_r(&now, &rtcTime);  // pretvara to vreme u strukturu podataka rtcTime
 
-  if(/*v.sek >= 60U*/rtcTime.tm_min != v.min){
+  if(v.sek >= 60U/*rtcTime.tm_min != v.min*/){
     
-   // Serial.println(String(rtcTime.tm_hour) + "." + String(rtcTime.tm_min) + "." + String(rtcTime.tm_sec));
    // sinhronizacija();
     v.sek = 0U;
     v.min += 1U;
@@ -325,11 +327,7 @@ void vremenski_pomak(){
     if(u_toku_automatsko_podesavanje_sata && poteraj_kazaljku_automatski_br_min > 0){
       br_min_auto_podesavanje_sata += 1;
     }
-
-  //  Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
- //   Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
-
-   // Serial.println("Broj prekida: " + String(brojac_prekida));
+   
     if(v.min >= 60U){
       v.min = 0U;
       v.sat += 1U;
@@ -366,9 +364,9 @@ void vremenski_pomak(){
       }
     }
 
-    v.sek = rtcTime.tm_sec;      
+   /* v.sek = rtcTime.tm_sec;      
     v.min = rtcTime.tm_min;
-    v.sat = rtcTime.tm_hour;
+    v.sat = rtcTime.tm_hour;*/
     Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
     Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
 
@@ -398,7 +396,7 @@ void sinhronizacija(){
   WiFi.mode(WIFI_STA);      // pri povezivanju na ruter, prelazi u rezim WiFi stanice
  // WiFi.disconnect(false);
   delay(100U);
-  WiFi.begin(ssid_STA, password_STA); // inicijalizacija WiFi
+  WiFi.begin(ssid_STA, password_STA); // inicijalizacija WiFi, pre pocetka povezivanja
   uint8_t br_pokusaja = 0U;
   while(WiFi.status() != WL_CONNECTED && br_pokusaja < BR_POKUSAJA_POVEZIVANJA){   // povezivanje na WiFi mrezu (koja ima internet)
     Serial.write(".");
@@ -416,7 +414,7 @@ void sinhronizacija(){
 
   if(povezan){
     configTime(gmtPomak, letnje_aktivno, NTP_server); // slanje zahteva ka internet serveru koji daje date/time, upis u RTC
-    Serial.println("s");
+    Serial.println("Povezan na ruter!");
   }
   struct tm timeinfo;
   if(povezan)br_pokusaja = 0U;
@@ -437,14 +435,12 @@ void sinhronizacija(){
     v.god = timeinfo.tm_year + 1900U;
     sinhronizovan = true;
     status_sistema = STATUS_OK;
-    Serial.println(String(v.god) + " " + String(v.mesec) + " " + String(v.dan));
-    Serial.print(String(v.sat) + " " + String(v.min) + " " + String(v.sek));
+    Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
+    Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
   }
-
   WiFi.disconnect(true, true);
   delay(100);
   WiFi.mode(WIFI_AP);   // kad se zavrsi sinhronizacija, povratak u WiFi rezim AP
-  
 }
 
 void posalji_impuls_kazaljka(){
@@ -675,7 +671,8 @@ void obrada_stringa(String str){      // obradjivanje svih ulaznih poruka
   }
 
 
-  void ucitaj_iz_memorije(){
+
+void ucitaj_iz_memorije(){
     // ucitavanje iz memorije po mapi, koja je rucno sastavljena
     Serial.println("ucitavanje");
     uint8_t velicina_vektora = ocitajPodatak<uint8_t>(0);
@@ -713,25 +710,28 @@ void obrada_stringa(String str){      // obradjivanje svih ulaznih poruka
 
 
     vector<uint8_t>::iterator it;
-      for(it = raspored_zvona_sati.begin(); it != raspored_zvona_sati.end(); it++){
-        Serial.println(*it);
-      }
-      for(it = raspored_zvona_min.begin(); it != raspored_zvona_min.end(); it++){
-        Serial.println(*it);
-      }
-      Serial.println(ukljuceno_automatsko_zvono);
-      Serial.println(sinhronizacija_sati);
-      Serial.println(sinhronizacija_min);
+    for(it = raspored_zvona_sati.begin(); it != raspored_zvona_sati.end(); it++){
+      Serial.println(*it);
+    }
+    for(it = raspored_zvona_min.begin(); it != raspored_zvona_min.end(); it++){
+      Serial.println(*it);
+    }
+    Serial.println(ukljuceno_automatsko_zvono);
+    Serial.println(sinhronizacija_sati);
+    Serial.println(sinhronizacija_min);
 
-      for(int i = 0; i < velicina_ssid; i++){
-        Serial.println(ssid_STA[i]);
-     }
+    for(int i = 0; i < velicina_ssid; i++){
+      Serial.println(ssid_STA[i]);
+    }
 
-      for(int i = 0; i < velicina_password; i++){
-        Serial.println(password_STA[i]);
-      }
+    for(int i = 0; i < velicina_password; i++){
+      Serial.println(password_STA[i]);
+    }
       
   }
+
+
+
 
 
 
@@ -765,7 +765,7 @@ int duzina_char_stringa(char str[]){
 void IRAM_ATTR onTimer0(){
   portENTER_CRITICAL_ISR(&timerMux0);
  // br_sekundi += 1;
- // v.sek += 1;
+  v.sek += 1;
   prekid_tajmera = true;
   br_prekida_tajmera += 1U;
   portEXIT_CRITICAL_ISR(&timerMux0);
