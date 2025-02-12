@@ -39,6 +39,7 @@ using namespace std;
 #define BR_POKUSAJA_POVEZIVANJA 20
 #define DEBOUNCING_INTERVAL1 10000    // preciznije saltanje kazaljke, sporije, u blizini odredjene minute
 #define DEBOUNCING_INTERVAL2 1000   // brze saltanje kazaljke, za brze dostizanje odredjenog sata i minute
+#define TIMEOUT_POVEZIVANJE 30U   // interval povezivanja, ako premasi, restart
 
 #define STATUS_OK 0   // sve je u redu
 #define STATUS_ERR_UNKNOWN_TIME 1 // neuspelo povezivanje pri paljenju sistema, ne zna vreme
@@ -82,6 +83,7 @@ uint8_t status_sistema = STATUS_ERR_UNKNOWN_TIME;   // varijabla koja govori u k
 bool povezan = false;
 bool pin1_na_low = true; // info da pamti koji pin treba da se ugasi a koji da se upali kad dodje vreme da se posalje signal kazaljki sata. U medjuvremenu su ugasena oba pina zbog ustede. Signalizacija traje x ms.
 uint8_t br_prekida_tajmera = 0U;
+uint8_t rucni_watchdog = 0U;
 uint16_t br_debouncing_taster1 = 0U;
 uint16_t br_debouncing_taster2 = 0U;
 
@@ -92,11 +94,13 @@ bool u_toku_automatsko_podesavanje_sata = false;
 uint8_t br_min_auto_podesavanje_sata = 0U;    // broj minuta protekao od kako je pocelo automatsko podesavanje sata
 int16_t poteraj_kazaljku_automatski_br_min = 0;   // broj minuta za koji treba poterati kazaljku kod automatskog namestanja sata
 uint8_t br_prekida_tajmera_auto_kazaljka = 0U; // tokom automatskog namestanja sata, kazaljka bi trebalo da se pomera npr jednom u sekundi, bez prevelikog opterecenja
+bool sinhronizacija_u_toku = false;
 
 vector<uint8_t> raspored_zvona_sati;    // spisak svih sati kad treba zvoniti
 vector<uint8_t> raspored_zvona_min;   // spisak svih minuta kad treba zvoniti (uslov da zvoni jeste da se poklapa i sat i minuta iz oba vektora sa trenutnim vremenom)
 
 int brojac_prekida = 0;
+
 
 struct tm rtcTime;
 
@@ -105,6 +109,9 @@ portMUX_TYPE timerMux0 = portMUX_INITIALIZER_UNLOCKED;
 
 hw_timer_t* timer1 = NULL; 
 portMUX_TYPE timerMux1 = portMUX_INITIALIZER_UNLOCKED;
+
+hw_timer_t* timer2 = NULL;  // timer2 kao tajmer da zastiti od zaglavljivanja u setup-u, daje se odredjen interval da se zavrsi setup i ako se ne zavrsi do tad, restart mikrokontrolera
+portMUX_TYPE timerMux2 = portMUX_INITIALIZER_UNLOCKED;
 
 portMUX_TYPE muxTaster1 = portMUX_INITIALIZER_UNLOCKED;                  //za external interrupt
 portMUX_TYPE muxTaster2 = portMUX_INITIALIZER_UNLOCKED; 
@@ -169,6 +176,7 @@ void setup() {
   ucitaj_iz_memorije();
 
   delay(150);
+  sinhronizacija_u_toku = true;
   WiFi.mode(WIFI_STA);   // stanica, povezuje se na AP (router)
   WiFi.begin(ssid_STA, password_STA); // inicijalizacija WiFi kao stanice, za povezivanje na druge WiFi mreze
 
@@ -205,6 +213,8 @@ void setup() {
 
   WiFi.disconnect(false);      // prekidanje veze sa ruterom kad se dobije potreban podatak
   delay(500);
+  sinhronizacija_u_toku = false;
+  rucni_watchdog = 0U;
 
   WiFi.mode(WIFI_AP);     // od sad radi u rezimu AP (druge stanice se povezuju na njega)
   if (WiFi.softAP(ssid_AP, password_AP)) {  // inicijalizacija sopstvene WiFi mreze
@@ -242,9 +252,7 @@ void loop() {
         delay(2);
         String ack = "t";
         client.println(ack);    // obavestavanje posiljaoca da je poruka uspesno primljena
-
         delay(2);
-
       }
     }
     else{
@@ -260,6 +268,10 @@ void loop() {
   }
   else if(/*(v.sat == sinhronizacija_sati) && */(v.min == (sinhronizacija_min + 1U)) && sinhronizovan){
     sinhronizovan = false;
+  }
+
+  if((v.sat == 5) && (v.min == 30)){    // restartovanje jednom dnevno
+    ESP.restart();
   }
   
   if(prekid_tajmera){   // prosla 1sec
@@ -312,11 +324,11 @@ void loop() {
 
 void vremenski_pomak(){
  // time_t now = time(nullptr);   // dobijanje trenutno vreme od epohe, iz RTC timer-a
-//  localtime_r(&now, &rtcTime);  // pretvara to vreme u strukturu podataka rtcTime
+  //  localtime_r(&now, &rtcTime);  // pretvara to vreme u strukturu podataka rtcTime
 
   if(v.sek >= 60U/*rtcTime.tm_min != v.min*/){
     
-   // sinhronizacija();
+    //sinhronizacija();
     v.sek = 0U;
     v.min += 1U;
     if(!u_toku_automatsko_podesavanje_sata){
@@ -393,6 +405,7 @@ void vremenski_pomak(){
 }
 
 void sinhronizacija(){
+  sinhronizacija_u_toku = true;
   WiFi.mode(WIFI_STA);      // pri povezivanju na ruter, prelazi u rezim WiFi stanice
  // WiFi.disconnect(false);
   delay(100U);
@@ -415,6 +428,7 @@ void sinhronizacija(){
   if(povezan){
     configTime(gmtPomak, letnje_aktivno, NTP_server); // slanje zahteva ka internet serveru koji daje date/time, upis u RTC
     Serial.println("Povezan na ruter!");
+    //delay(2000);
   }
   struct tm timeinfo;
   if(povezan)br_pokusaja = 0U;
@@ -440,6 +454,8 @@ void sinhronizacija(){
   }
   WiFi.disconnect(true, true);
   delay(100);
+  sinhronizacija_u_toku = false;
+  rucni_watchdog = 0U;
   WiFi.mode(WIFI_AP);   // kad se zavrsi sinhronizacija, povratak u WiFi rezim AP
 }
 
@@ -458,6 +474,7 @@ void posalji_impuls_kazaljka(){
 
 void upali_zvono(){
   digitalWrite(PIN_ZVONO, LOW);
+  Serial.println("Zvonim: " + String(v.sat) + ":" + String(v.min));
 }
 void posalji_stanje_WiFi(){
     if(status_sistema == STATUS_OK){
@@ -530,6 +547,7 @@ void provera_string_ruter(String str, char ssid[], char password[]){
 void obrada_stringa(String str){      // obradjivanje svih ulaznih poruka
 
   if(str[0] == 'a'){        // pali zvono
+    br_prekida_tajmera = 0U;
     upali_zvono();
   }
   else if(str[0] == 'b'){         // vrati status sistema
@@ -565,7 +583,7 @@ void obrada_stringa(String str){      // obradjivanje svih ulaznih poruka
         poteraj_kazaljku_automatski_br_min = razlika_min;
     }
     else{
-      poteraj_kazaljku_automatski_br_min = 720 - razlika_min; 
+      poteraj_kazaljku_automatski_br_min = 720 - razlika_min;
     }
     Serial.println("Teraj " + String(poteraj_kazaljku_automatski_br_min));
 
@@ -764,17 +782,29 @@ int duzina_char_stringa(char str[]){
 
 void IRAM_ATTR onTimer0(){
   portENTER_CRITICAL_ISR(&timerMux0);
- // br_sekundi += 1;
-  v.sek += 1;
+  if(!sinhronizacija_u_toku){
+    v.sek += 1;
+  }
   prekid_tajmera = true;
   br_prekida_tajmera += 1U;
   portEXIT_CRITICAL_ISR(&timerMux0);
 }
 
 void IRAM_ATTR onTimer1(){
-  portENTER_CRITICAL_ISR(&timerMux0);
-  br_prekida_tajmera_auto_kazaljka += 1;
-  portEXIT_CRITICAL_ISR(&timerMux0);
+  portENTER_CRITICAL_ISR(&timerMux1);
+  br_prekida_tajmera_auto_kazaljka += 1U;
+  portEXIT_CRITICAL_ISR(&timerMux1);
+}
+
+void IRAM_ATTR onTimer2(){
+  portENTER_CRITICAL_ISR(&timerMux2);
+  if(sinhronizacija_u_toku){
+    rucni_watchdog += 1U;
+    if(rucni_watchdog > TIMEOUT_POVEZIVANJE){     // 30sec za povezivanje, ako premasi, restart MCU
+      ESP.restart();
+    }
+  }
+  portEXIT_CRITICAL_ISR(&timerMux2);
 }
 
 
