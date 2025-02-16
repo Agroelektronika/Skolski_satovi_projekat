@@ -19,6 +19,12 @@
 #include <vector>
 #include <iterator>
 #include <EEPROM.h>
+#include "esp_system.h"
+#include "driver/rtc_io.h"
+#include "soc/rtc.h"
+
+
+
 
 using namespace std;
 
@@ -40,10 +46,13 @@ using namespace std;
 #define DEBOUNCING_INTERVAL1 10000    // preciznije saltanje kazaljke, sporije, u blizini odredjene minute
 #define DEBOUNCING_INTERVAL2 1000   // brze saltanje kazaljke, za brze dostizanje odredjenog sata i minute
 #define TIMEOUT_POVEZIVANJE 30U   // interval povezivanja, ako premasi, restart
+#define BROJ_SINHRONIZACIJA_U_SATU 12
 
 #define STATUS_OK 0   // sve je u redu
 #define STATUS_ERR_UNKNOWN_TIME 1 // neuspelo povezivanje pri paljenju sistema, ne zna vreme
 #define STATUS_WARNING_TIME_NOT_CORRECTED 2 // neuspelo povezivanje pri korekciji vremena
+
+
 
 typedef struct{       // struktura koja opisuje vremensku odrednicu, sve info o datumu i vremenu, azurira se preko tajmera a korekcija se vrsi sa interneta
   uint8_t sek;
@@ -86,6 +95,7 @@ uint8_t br_prekida_tajmera = 0U;
 uint8_t rucni_watchdog = 0U;
 uint16_t br_debouncing_taster1 = 0U;
 uint16_t br_debouncing_taster2 = 0U;
+bool detektovana_nepravilnost = false;
 
 uint8_t sinhronizacija_sati = 6;    // vreme sinhronizacije sa sistemskim vremenom, preko interneta
 uint8_t sinhronizacija_min = 30;
@@ -95,11 +105,17 @@ uint8_t br_min_auto_podesavanje_sata = 0U;    // broj minuta protekao od kako je
 int16_t poteraj_kazaljku_automatski_br_min = 0;   // broj minuta za koji treba poterati kazaljku kod automatskog namestanja sata
 uint8_t br_prekida_tajmera_auto_kazaljka = 0U; // tokom automatskog namestanja sata, kazaljka bi trebalo da se pomera npr jednom u sekundi, bez prevelikog opterecenja
 bool sinhronizacija_u_toku = false;
+uint8_t br_sek_taster_zvono_pritisnut = 0U; // taster mora biti pritisnut neko vreme da se aktivira zvono
+bool pritisnut_taster_zvono = false;      // ako je registrovano LOW na pinu za taster zvona
 
 vector<uint8_t> raspored_zvona_sati;    // spisak svih sati kad treba zvoniti
 vector<uint8_t> raspored_zvona_min;   // spisak svih minuta kad treba zvoniti (uslov da zvoni jeste da se poklapa i sat i minuta iz oba vektora sa trenutnim vremenom)
 
 int brojac_prekida = 0;
+int64_t protekle_minute_tmp = 0U;
+int64_t protekle_minute_timer0 = 0U;
+
+uint8_t vreme_sync[] = {3U, 8U, 13U, 18U, 23U, 28U, 33U, 38U, 43U, 48U, 53U, 58U};    // vreme sinhronizacije u toku jednog sata, svakih 5min
 
 
 struct tm rtcTime;
@@ -139,18 +155,20 @@ void setup() {
   setCpuFrequencyMhz(80);   // najniza brzina radnog takta
   Serial.begin(115200);
   EEPROM.begin(512);
+  rtc_clk_slow_freq_set(RTC_SLOW_FREQ_RTC);   // clock source za rtc, 33kHz
+
 
   timer0 = timerBegin(0, 80U, true);      // inicijalizacija tajmera koji meri vreme, za postavljanje stanja na pinove
   timerAttachInterrupt(timer0, &onTimer0, true);
   timerAlarmWrite(timer0, 1000000, true);     // korak od 1sec
-  timerAlarmEnable(timer0);
+  timerAlarmEnable(timer0); // omogucavanje prekida
 
   delay(150);
 
   timer1 = timerBegin(1, 80U, true);      // inicijalizacija tajmera koji sluzi tokom automatskog namestanja sata
   timerAttachInterrupt(timer1, &onTimer1, true);
   timerAlarmWrite(timer1, 250000, true);     // korak od 250ms
-  timerAlarmEnable(timer1);
+  //timerAlarmEnable(timer1);
 
   pinMode(PIN_TASTER1, INPUT_PULLUP);    // tasteri na ulaznim pinovima
   pinMode(PIN_TASTER2, INPUT_PULLUP);    //
@@ -263,16 +281,8 @@ void loop() {
   }
 
   vremenski_pomak();
-  if(/*(v.sat == sinhronizacija_sati) && */(v.min == sinhronizacija_min) && !sinhronizovan){
-    sinhronizacija();
-  }
-  else if(/*(v.sat == sinhronizacija_sati) && */(v.min == (sinhronizacija_min + 1U)) && sinhronizovan){
-    sinhronizovan = false;
-  }
+  
 
-  if((v.sat == 5) && (v.min == 30)){    // restartovanje jednom dnevno
-    ESP.restart();
-  }
   
   if(prekid_tajmera){   // prosla 1sec
    // Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
@@ -298,11 +308,18 @@ void loop() {
     br_debouncing_taster1 = 0;
   }
 
-  if(digitalRead(PIN_TASTER2) == LOW && br_debouncing_taster2 > DEBOUNCING_INTERVAL1){      // polling, ispitivanje da li su tasteri pritisnuti
+  if(digitalRead(PIN_TASTER2) == LOW/* && br_debouncing_taster2 > DEBOUNCING_INTERVAL1*/){      // polling, ispitivanje da li su tasteri pritisnuti
     Serial.println("pritisak tastera 2");                                               // metoda prekida je onemogucena zbog suma u napajanju koje dolazi sa 220V, i izaziva prekide kad ne treba
-    upali_zvono();
-    br_prekida_tajmera = 0U;
-    br_debouncing_taster2 = 0;
+    pritisnut_taster_zvono = true;
+    if(br_sek_taster_zvono_pritisnut >= 3U){   // duzi pritisak
+      upali_zvono();
+      br_prekida_tajmera = 0U;
+    }
+   // br_debouncing_taster2 = 0;
+  }
+  else if(digitalRead(PIN_TASTER2) == HIGH){
+    br_sek_taster_zvono_pritisnut = 0;
+    pritisnut_taster_zvono = false;
   }
 
  /* if(digitalRead(PIN_TASTER2) == LOW && br_debouncing_taster2 > DEBOUNCING_INTERVAL2){
@@ -323,14 +340,39 @@ void loop() {
 }
 
 void vremenski_pomak(){
- // time_t now = time(nullptr);   // dobijanje trenutno vreme od epohe, iz RTC timer-a
-  //  localtime_r(&now, &rtcTime);  // pretvara to vreme u strukturu podataka rtcTime
+  
+  int64_t now = esp_timer_get_time();  // vreme u us od starta sistema
+  int64_t protekle_sekunde = now / 1000000LL;    // vreme u sekundama od starta sistema
+  int64_t protekle_minute = protekle_sekunde / 60LL;
+  int64_t protekli_sati = protekle_minute / 60LL;
+  
 
   if(v.sek >= 60U/*rtcTime.tm_min != v.min*/){
     
     //sinhronizacija();
+    protekle_minute_timer0 += 1LL;
     v.sek = 0U;
     v.min += 1U;
+
+    
+    if((v.sat == 5) && (v.min == 30)){    // restartovanje jednom dnevno
+      ESP.restart();
+    }
+/*
+    time_t now = time(nullptr);   // dobijanje trenutno vreme od epohe, iz RTC timer-a
+    localtime_r(&now, &rtcTime);  // pretvara to vreme u strukturu podataka rtcTime
+
+    if(v.min != rtcTime.tm_min && !detektovana_nepravilnost){     // RTC i timer0 se ne slazu, nesto nije u redu sa tajmerima, sinhronizacija
+      detektovana_nepravilnost = true;
+      sinhronizacija();
+    }
+    else if(v.min != rtcTime.tm_min && detektovana_nepravilnost){   // ako se opet desi ista situacija, restart sistema
+      ESP.restart();
+    }
+    else if(v.min == rtcTime.tm_min){
+      detektovana_nepravilnost = false;
+    }
+*/
     if(!u_toku_automatsko_podesavanje_sata){
       posalji_impuls_kazaljka();
     }
@@ -382,6 +424,15 @@ void vremenski_pomak(){
     Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
     Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
 
+    for(uint8_t i = 0; i < BROJ_SINHRONIZACIJA_U_SATU; i++){
+      if((v.min == vreme_sync[i]) && !sinhronizovan){
+        sinhronizacija();
+      }
+      else if((v.min == (vreme_sync[i] + 1U)) && sinhronizovan){
+        sinhronizovan = false;
+      }
+    }
+
     vector<uint8_t>::iterator it1;
     vector<uint8_t>::iterator it2;
     int i = 0;
@@ -399,9 +450,13 @@ void vremenski_pomak(){
       i += 1;
     }
 
-    
-
   }
+
+  int8_t razlika_merenja = protekle_minute_timer0 - protekle_minute;
+  if(abs(razlika_merenja) >= 2){    // ako je detektovana razlika u ova dva merenja, postoji neki disbalans u tajmerima, restartovati sistem
+    ESP.restart();
+  }
+
 }
 
 void sinhronizacija(){
@@ -428,7 +483,7 @@ void sinhronizacija(){
   if(povezan){
     configTime(gmtPomak, letnje_aktivno, NTP_server); // slanje zahteva ka internet serveru koji daje date/time, upis u RTC
     Serial.println("Povezan na ruter!");
-    //delay(2000);
+    delay(2000U);
   }
   struct tm timeinfo;
   if(povezan)br_pokusaja = 0U;
@@ -440,6 +495,9 @@ void sinhronizacija(){
     status_sistema = STATUS_WARNING_TIME_NOT_CORRECTED;
   }
   else{
+    v.sek = 0U;
+    v.min = 0U;
+    v.sat = 0U;
     v.sek = timeinfo.tm_sec;      // nakon dobijenih info, osvezavanje vremena (korekcija)
     v.min = timeinfo.tm_min;
     v.sat = timeinfo.tm_hour;
@@ -502,6 +560,7 @@ void automatsko_podesavanje_sata(){
     }
     else if(br_min_auto_podesavanje_sata == 0){
       u_toku_automatsko_podesavanje_sata = false;
+      timerAlarmDisable(timer1);
    //   Serial.println(br_min_auto_podesavanje_sata);
     }
     
@@ -686,6 +745,10 @@ void obrada_stringa(String str){      // obradjivanje svih ulaznih poruka
       }
       
     }
+    else if(str[0] == 'i'){
+      String str = String(v.sat) + ":" + String(v.min) + ".";
+      client.println(str);
+    }
   }
 
 
@@ -753,6 +816,7 @@ void ucitaj_iz_memorije(){
 
 
 
+
 void upisiPodatak(int adresa, int vrednost, uint8_t duzina){
     if(duzina == 1){ //1B
         EEPROM.write(adresa, vrednost);
@@ -785,6 +849,16 @@ void IRAM_ATTR onTimer0(){
   if(!sinhronizacija_u_toku){
     v.sek += 1;
   }
+  else if(sinhronizacija_u_toku){
+    rucni_watchdog += 1U;
+    if(rucni_watchdog > TIMEOUT_POVEZIVANJE){     // 30sec za povezivanje, ako premasi, restart MCU
+      ESP.restart();
+    }
+  }
+
+  if(pritisnut_taster_zvono){
+    br_sek_taster_zvono_pritisnut += 1;
+  }
   prekid_tajmera = true;
   br_prekida_tajmera += 1U;
   portEXIT_CRITICAL_ISR(&timerMux0);
@@ -796,16 +870,7 @@ void IRAM_ATTR onTimer1(){
   portEXIT_CRITICAL_ISR(&timerMux1);
 }
 
-void IRAM_ATTR onTimer2(){
-  portENTER_CRITICAL_ISR(&timerMux2);
-  if(sinhronizacija_u_toku){
-    rucni_watchdog += 1U;
-    if(rucni_watchdog > TIMEOUT_POVEZIVANJE){     // 30sec za povezivanje, ako premasi, restart MCU
-      ESP.restart();
-    }
-  }
-  portEXIT_CRITICAL_ISR(&timerMux2);
-}
+
 
 
 /*
