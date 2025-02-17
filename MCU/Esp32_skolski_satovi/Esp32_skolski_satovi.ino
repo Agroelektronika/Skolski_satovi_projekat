@@ -505,7 +505,9 @@ void sinhronizacija(){
     delay(10U);
   }
   if(br_pokusaja >= BR_POKUSAJA_POVEZIVANJA){
-    status_sistema = STATUS_WARNING_TIME_NOT_CORRECTED;
+    if(status_sistema == STATUS_OK || status_sistema == STATUS_WARNING_TIME_NOT_CORRECTED){
+      status_sistema = STATUS_WARNING_TIME_NOT_CORRECTED;
+    }
     v.sek += 10U;      // nadoknada gubitka vremena za povezivanje, izgubio je 10sec da se poveze i nije se povezao, nije pokupio info o vremenu sa interneta
     if(v.sek >= 60U){
       v.sek = 0U;
