@@ -114,6 +114,7 @@ vector<uint8_t> raspored_zvona_min;   // spisak svih minuta kad treba zvoniti (u
 int brojac_prekida = 0;
 int64_t protekle_minute_tmp = 0U;
 int64_t protekle_minute_timer0 = 0U;
+bool nocni_rezim = false;
 
 uint8_t vreme_sync[] = {3U, 8U, 13U, 18U, 23U, 28U, 33U, 38U, 43U, 48U, 53U, 58U};    // vreme sinhronizacije u toku jednog sata, svakih 5min
 
@@ -355,7 +356,7 @@ void vremenski_pomak(){
     v.min += 1U;
 
     
-    if((v.sat == 5) && (v.min == 30)){    // restartovanje jednom dnevno
+    if((v.sat == 5U) && (v.min == 30U)){    // restartovanje jednom dnevno
       ESP.restart();
     }
 /*
@@ -424,11 +425,21 @@ void vremenski_pomak(){
     Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
     Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
 
+    if((v.sat >= 5U) && (v.sat <= 21U)){  // dnevni rezim
+        nocni_rezim = false;
+    }
+    else{
+      nocni_rezim = true;
+      if(v.min == sinhronizacija_min){
+        sinhronizacija();   // u toku noci, sinhronizacija jednom u sat vremena  
+      }
+    }
+
     for(uint8_t i = 0; i < BROJ_SINHRONIZACIJA_U_SATU; i++){
-      if((v.min == vreme_sync[i]) && !sinhronizovan){
+      if(!nocni_rezim && (v.min == vreme_sync[i]) && !sinhronizovan){
         sinhronizacija();
       }
-      else if((v.min == (vreme_sync[i] + 1U)) && sinhronizovan){
+      else if(!nocni_rezim && (v.min == (vreme_sync[i] + 1U)) && sinhronizovan){
         sinhronizovan = false;
       }
     }
@@ -450,12 +461,14 @@ void vremenski_pomak(){
       i += 1;
     }
 
+    int8_t razlika_merenja = protekle_minute_timer0 - protekle_minute;
+    if(abs(razlika_merenja) >= 2){    // ako je detektovana razlika u ova dva merenja, postoji neki disbalans u tajmerima, restartovati sistem
+      ESP.restart();
+    }
+
   }
 
-  int8_t razlika_merenja = protekle_minute_timer0 - protekle_minute;
-  if(abs(razlika_merenja) >= 2){    // ako je detektovana razlika u ova dva merenja, postoji neki disbalans u tajmerima, restartovati sistem
-    ESP.restart();
-  }
+  
 
 }
 
@@ -469,7 +482,7 @@ void sinhronizacija(){
   while(WiFi.status() != WL_CONNECTED && br_pokusaja < BR_POKUSAJA_POVEZIVANJA){   // povezivanje na WiFi mrezu (koja ima internet)
     Serial.write(".");
     br_pokusaja += 1U;
-    delay(500);
+    delay(500U);
   }
   if(br_pokusaja < BR_POKUSAJA_POVEZIVANJA){
     povezan = true;
@@ -487,12 +500,24 @@ void sinhronizacija(){
   }
   struct tm timeinfo;
   if(povezan)br_pokusaja = 0U;
-  while (!getLocalTime(&timeinfo) && (br_pokusaja < BR_POKUSAJA_POVEZIVANJA) && povezan) {    // citanje iz RTC
+  while (!getLocalTime(&timeinfo) && (br_pokusaja < BR_POKUSAJA_POVEZIVANJA) && povezan) {    // citanje iz RTC, petlja nije neophodna
     br_pokusaja += 1U;
     delay(10U);
   }
   if(br_pokusaja >= BR_POKUSAJA_POVEZIVANJA){
     status_sistema = STATUS_WARNING_TIME_NOT_CORRECTED;
+    v.sek += 10U;      // nadoknada gubitka vremena za povezivanje, izgubio je 10sec da se poveze i nije se povezao, nije pokupio info o vremenu sa interneta
+    if(v.sek >= 60U){
+      v.sek = 0U;
+      v.min += 1U;
+      if(v.min >= 60U){
+        v.min = 0U;
+        v.sat += 1U;
+        if(v.sat >= 24U){
+          v.sat = 0U;
+        }
+      }
+    }
   }
   else{
     v.sek = 0U;
@@ -745,7 +770,7 @@ void obrada_stringa(String str){      // obradjivanje svih ulaznih poruka
       }
       
     }
-    else if(str[0] == 'i'){
+    else if(str[0] == 'i'){     // test
       String str = String(v.sat) + ":" + String(v.min) + ".";
       client.println(str);
     }
