@@ -827,6 +827,7 @@ void IRAM_ATTR onTimer0(){
   if(sinhronizacija_u_toku){
     trajanje_sinhronizacije += 1U;
   }
+  br_prekida_tajmera += 1U;
   //portEXIT_CRITICAL_ISR(&timerMux0);
 }
 
