@@ -46,7 +46,7 @@ using namespace std;
 #define DEBOUNCING_INTERVAL1 10000    // preciznije saltanje kazaljke, sporije, u blizini odredjene minute
 #define DEBOUNCING_INTERVAL2 1000   // brze saltanje kazaljke, za brze dostizanje odredjenog sata i minute
 #define TIMEOUT_POVEZIVANJE 30U   // interval povezivanja, ako premasi, restart
-#define BROJ_SINHRONIZACIJA_U_SATU 12
+#define BROJ_SINHRONIZACIJA_U_SATU 23
 
 #define STATUS_OK 0   // sve je u redu
 #define STATUS_ERR_UNKNOWN_TIME 1 // neuspelo povezivanje pri paljenju sistema, ne zna vreme
@@ -81,42 +81,38 @@ WiFiClient client;
 WiFiServer server(80);
 String str_za_wifi = "";
 
-uint8_t br_sekundi = 0U; // brojac prekida tajmera
 Vreme v;
-bool sinhronizovan = false;
-bool prekid_tajmera = false;
+volatile bool sinhronizovan = false;
+volatile bool prekid_tajmera = false;   // menja se u ISR
 bool prekid_tastera1 = false;
 bool prekid_tastera2 = false;
 bool prestupna_godina = false;
-uint8_t status_sistema = STATUS_ERR_UNKNOWN_TIME;   // varijabla koja govori u kom stanju se nalazi sistem
+volatile uint8_t status_sistema = STATUS_ERR_UNKNOWN_TIME;   // varijabla koja govori u kom stanju se nalazi sistem
 bool povezan = false;
 bool pin1_na_low = true; // info da pamti koji pin treba da se ugasi a koji da se upali kad dodje vreme da se posalje signal kazaljki sata. U medjuvremenu su ugasena oba pina zbog ustede. Signalizacija traje x ms.
 uint8_t br_prekida_tajmera = 0U;
-uint8_t rucni_watchdog = 0U;
+volatile uint8_t rucni_watchdog = 0U;
 uint16_t br_debouncing_taster1 = 0U;
 uint16_t br_debouncing_taster2 = 0U;
-bool detektovana_nepravilnost = false;
 
 uint8_t sinhronizacija_sati = 6;    // vreme sinhronizacije sa sistemskim vremenom, preko interneta
 uint8_t sinhronizacija_min = 30;
 bool ukljuceno_automatsko_zvono = true;
-bool u_toku_automatsko_podesavanje_sata = false;
-uint8_t br_min_auto_podesavanje_sata = 0U;    // broj minuta protekao od kako je pocelo automatsko podesavanje sata
+volatile bool u_toku_automatsko_podesavanje_sata = false;
+volatile uint8_t br_min_auto_podesavanje_sata = 0U;    // broj minuta protekao od kako je pocelo automatsko podesavanje sata
 int16_t poteraj_kazaljku_automatski_br_min = 0;   // broj minuta za koji treba poterati kazaljku kod automatskog namestanja sata
-uint8_t br_prekida_tajmera_auto_kazaljka = 0U; // tokom automatskog namestanja sata, kazaljka bi trebalo da se pomera npr jednom u sekundi, bez prevelikog opterecenja
-bool sinhronizacija_u_toku = false;
+volatile uint8_t br_prekida_tajmera_auto_kazaljka = 0U; // tokom automatskog namestanja sata, kazaljka bi trebalo da se pomera npr jednom u sekundi, bez prevelikog opterecenja
+volatile bool sinhronizacija_u_toku = false;
 uint8_t br_sek_taster_zvono_pritisnut = 0U; // taster mora biti pritisnut neko vreme da se aktivira zvono
 bool pritisnut_taster_zvono = false;      // ako je registrovano LOW na pinu za taster zvona
+volatile uint8_t trajanje_sinhronizacije = 0U; // treba nam info koliko je sinhronizacija trajala, ako propadne, da se precizno nadoknadi vreme
+volatile int br = 0;
 
 vector<uint8_t> raspored_zvona_sati;    // spisak svih sati kad treba zvoniti
 vector<uint8_t> raspored_zvona_min;   // spisak svih minuta kad treba zvoniti (uslov da zvoni jeste da se poklapa i sat i minuta iz oba vektora sa trenutnim vremenom)
 
-int brojac_prekida = 0;
-int64_t protekle_minute_tmp = 0U;
-int64_t protekle_minute_timer0 = 0U;
-bool nocni_rezim = false;
 
-uint8_t vreme_sync[] = {3U, 8U, 13U, 18U, 23U, 28U, 33U, 38U, 43U, 48U, 53U, 58U};    // vreme sinhronizacije u toku jednog sata, svakih 5min
+uint8_t vreme_sync[] = {3U, 6U, 9U, 12U, 14U, 17U, 19U, 22U, 24U, 27U, 29U, 32U, 34U, 37U, 39U, 42U, 44U, 47U, 49U, 52U, 54U, 57U, 59U};    // vreme sinhronizacije u toku jednog sata, svakih 5min
 
 
 struct tm rtcTime;
@@ -156,8 +152,6 @@ void setup() {
   setCpuFrequencyMhz(80);   // najniza brzina radnog takta
   Serial.begin(115200);
   EEPROM.begin(512);
-  rtc_clk_slow_freq_set(RTC_SLOW_FREQ_RTC);   // clock source za rtc, 33kHz
-
 
   timer0 = timerBegin(0, 80U, true);      // inicijalizacija tajmera koji meri vreme, za postavljanje stanja na pinove
   timerAttachInterrupt(timer0, &onTimer0, true);
@@ -203,7 +197,7 @@ void setup() {
   while(WiFi.status() != WL_CONNECTED && br_pokusaja < BR_POKUSAJA_POVEZIVANJA){   // povezivanje na WiFi mrezu (koja ima internet), konacan broj puta, ako je neuspesno, izadji
     Serial.write(".");
     br_pokusaja += 1U;
-    delay(500);
+    delay(1000U);
   }
   if(br_pokusaja < BR_POKUSAJA_POVEZIVANJA){
     povezan = true;
@@ -218,10 +212,7 @@ void setup() {
   }
 
   struct tm timeinfo;
-  if(povezan)br_pokusaja = 0U;
-  while (!getLocalTime(&timeinfo) && br_pokusaja < BR_POKUSAJA_POVEZIVANJA && povezan) {    // uzimanje info iz RTC i punjenje strukture timeinfo, nije neophodna while petlja
-    br_pokusaja += 1U;
-  }
+  getLocalTime(&timeinfo);    // uzimanje vrednosti iz RTC i upis u objekat strukture
   if(br_pokusaja < BR_POKUSAJA_POVEZIVANJA){
     status_sistema = STATUS_OK;
   }
@@ -230,8 +221,8 @@ void setup() {
   }
   br_pokusaja = 0U;
 
-  WiFi.disconnect(false);      // prekidanje veze sa ruterom kad se dobije potreban podatak
-  delay(500);
+  WiFi.disconnect(true, true);      // prekidanje veze sa ruterom kad se dobije potreban podatak
+  delay(100U);
   sinhronizacija_u_toku = false;
   rucni_watchdog = 0U;
 
@@ -293,6 +284,21 @@ void loop() {
       digitalWrite(PIN_KAZALJKA2, LOW);
       digitalWrite(PIN_ZVONO, HIGH);    // ugasiti zvono
     }
+
+    if(!sinhronizacija_u_toku){
+      v.sek += 1;
+    }
+    else if(sinhronizacija_u_toku){
+      rucni_watchdog += 1U;
+      if(rucni_watchdog > TIMEOUT_POVEZIVANJE){     // 30sec za povezivanje, ako premasi, restart MCU
+        ESP.restart();
+      }
+    }
+
+    if(pritisnut_taster_zvono){
+      br_sek_taster_zvono_pritisnut += 1;
+    }
+
     prekid_tajmera = false;
   }
 
@@ -304,7 +310,6 @@ void loop() {
   //Serial.println(br_debouncing_taster1);
   if(digitalRead(PIN_TASTER1) == LOW && br_debouncing_taster1 > DEBOUNCING_INTERVAL1){      // polling, ispitivanje da li su tasteri pritisnuti
     Serial.println("pritisak tastera 1");                                               // metoda prekida je onemogucena zbog suma u napajanju koje dolazi sa 220V, i izaziva prekide kad ne treba
-    brojac_prekida += 1;
     posalji_impuls_kazaljka();
     br_debouncing_taster1 = 0;
   }
@@ -342,38 +347,16 @@ void loop() {
 
 void vremenski_pomak(){
   
-  int64_t now = esp_timer_get_time();  // vreme u us od starta sistema
-  int64_t protekle_sekunde = now / 1000000LL;    // vreme u sekundama od starta sistema
-  int64_t protekle_minute = protekle_sekunde / 60LL;
-  int64_t protekli_sati = protekle_minute / 60LL;
-  
-
   if(v.sek >= 60U/*rtcTime.tm_min != v.min*/){
     
     //sinhronizacija();
-    protekle_minute_timer0 += 1LL;
     v.sek = 0U;
     v.min += 1U;
 
-    
     if((v.sat == 5U) && (v.min == 30U)){    // restartovanje jednom dnevno
       ESP.restart();
     }
-/*
-    time_t now = time(nullptr);   // dobijanje trenutno vreme od epohe, iz RTC timer-a
-    localtime_r(&now, &rtcTime);  // pretvara to vreme u strukturu podataka rtcTime
 
-    if(v.min != rtcTime.tm_min && !detektovana_nepravilnost){     // RTC i timer0 se ne slazu, nesto nije u redu sa tajmerima, sinhronizacija
-      detektovana_nepravilnost = true;
-      sinhronizacija();
-    }
-    else if(v.min != rtcTime.tm_min && detektovana_nepravilnost){   // ako se opet desi ista situacija, restart sistema
-      ESP.restart();
-    }
-    else if(v.min == rtcTime.tm_min){
-      detektovana_nepravilnost = false;
-    }
-*/
     if(!u_toku_automatsko_podesavanje_sata){
       posalji_impuls_kazaljka();
     }
@@ -419,28 +402,12 @@ void vremenski_pomak(){
       }
     }
 
-   /* v.sek = rtcTime.tm_sec;      
-    v.min = rtcTime.tm_min;
-    v.sat = rtcTime.tm_hour;*/
     Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
-    Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
-
-    if((v.sat >= 5U) && (v.sat <= 21U)){  // dnevni rezim
-        nocni_rezim = false;
-    }
-    else{
-      nocni_rezim = true;
-      if(v.min == sinhronizacija_min){
-        sinhronizacija();   // u toku noci, sinhronizacija jednom u sat vremena  
-      }
-    }
+    Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));  
 
     for(uint8_t i = 0; i < BROJ_SINHRONIZACIJA_U_SATU; i++){
-      if(!nocni_rezim && (v.min == vreme_sync[i]) && !sinhronizovan){
+      if((v.min == vreme_sync[i])){
         sinhronizacija();
-      }
-      else if(!nocni_rezim && (v.min == (vreme_sync[i] + 1U)) && sinhronizovan){
-        sinhronizovan = false;
       }
     }
 
@@ -461,11 +428,6 @@ void vremenski_pomak(){
       i += 1;
     }
 
-    int8_t razlika_merenja = protekle_minute_timer0 - protekle_minute;
-    if(abs(razlika_merenja) >= 2){    // ako je detektovana razlika u ova dva merenja, postoji neki disbalans u tajmerima, restartovati sistem
-      ESP.restart();
-    }
-
   }
 
   
@@ -475,15 +437,15 @@ void vremenski_pomak(){
 void sinhronizacija(){
   sinhronizacija_u_toku = true;
   WiFi.mode(WIFI_STA);      // pri povezivanju na ruter, prelazi u rezim WiFi stanice
- // WiFi.disconnect(false);
   delay(100U);
   WiFi.begin(ssid_STA, password_STA); // inicijalizacija WiFi, pre pocetka povezivanja
   uint8_t br_pokusaja = 0U;
   while(WiFi.status() != WL_CONNECTED && br_pokusaja < BR_POKUSAJA_POVEZIVANJA){   // povezivanje na WiFi mrezu (koja ima internet)
     Serial.write(".");
     br_pokusaja += 1U;
-    delay(500U);
+    delay(1000U);
   }
+  
   if(br_pokusaja < BR_POKUSAJA_POVEZIVANJA){
     povezan = true;
     Serial.println(WiFi.localIP());
@@ -499,29 +461,16 @@ void sinhronizacija(){
     delay(2000U);
   }
   struct tm timeinfo;
-  if(povezan)br_pokusaja = 0U;
-  while (!getLocalTime(&timeinfo) && (br_pokusaja < BR_POKUSAJA_POVEZIVANJA) && povezan) {    // citanje iz RTC, petlja nije neophodna
-    br_pokusaja += 1U;
-    delay(10U);
-  }
-  if(br_pokusaja >= BR_POKUSAJA_POVEZIVANJA){
+  getLocalTime(&timeinfo);    // citanje iz RTC
+
+  if(br_pokusaja >= BR_POKUSAJA_POVEZIVANJA){   // neuspesno
     if(status_sistema == STATUS_OK || status_sistema == STATUS_WARNING_TIME_NOT_CORRECTED){
       status_sistema = STATUS_WARNING_TIME_NOT_CORRECTED;
     }
-    v.sek += 10U;      // nadoknada gubitka vremena za povezivanje, izgubio je 10sec da se poveze i nije se povezao, nije pokupio info o vremenu sa interneta
-    if(v.sek >= 60U){
-      v.sek = 0U;
-      v.min += 1U;
-      if(v.min >= 60U){
-        v.min = 0U;
-        v.sat += 1U;
-        if(v.sat >= 24U){
-          v.sat = 0U;
-        }
-      }
-    }
+    v.sek = timeinfo.tm_sec;      // propala sinhronizacija, uzimanje vremena iz RTC
+    v.min = timeinfo.tm_min;
   }
-  else{
+  else{     // uspesno
     v.sek = 0U;
     v.min = 0U;
     v.sat = 0U;
@@ -538,9 +487,10 @@ void sinhronizacija(){
     Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
   }
   WiFi.disconnect(true, true);
-  delay(100);
+  delay(100U);
   sinhronizacija_u_toku = false;
   rucni_watchdog = 0U;
+  trajanje_sinhronizacije = 0U;
   WiFi.mode(WIFI_AP);   // kad se zavrsi sinhronizacija, povratak u WiFi rezim AP
 }
 
@@ -872,23 +822,12 @@ int duzina_char_stringa(char str[]){
 
 
 void IRAM_ATTR onTimer0(){
-  portENTER_CRITICAL_ISR(&timerMux0);
-  if(!sinhronizacija_u_toku){
-    v.sek += 1;
-  }
-  else if(sinhronizacija_u_toku){
-    rucni_watchdog += 1U;
-    if(rucni_watchdog > TIMEOUT_POVEZIVANJE){     // 30sec za povezivanje, ako premasi, restart MCU
-      ESP.restart();
-    }
-  }
-
-  if(pritisnut_taster_zvono){
-    br_sek_taster_zvono_pritisnut += 1;
-  }
+  //portENTER_CRITICAL_ISR(&timerMux0);
   prekid_tajmera = true;
-  br_prekida_tajmera += 1U;
-  portEXIT_CRITICAL_ISR(&timerMux0);
+  if(sinhronizacija_u_toku){
+    trajanje_sinhronizacije += 1U;
+  }
+  //portEXIT_CRITICAL_ISR(&timerMux0);
 }
 
 void IRAM_ATTR onTimer1(){
