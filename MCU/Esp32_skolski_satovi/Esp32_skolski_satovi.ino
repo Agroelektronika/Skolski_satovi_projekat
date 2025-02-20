@@ -90,7 +90,7 @@ bool prestupna_godina = false;
 volatile uint8_t status_sistema = STATUS_ERR_UNKNOWN_TIME;   // varijabla koja govori u kom stanju se nalazi sistem
 bool povezan = false;
 bool pin1_na_low = true; // info da pamti koji pin treba da se ugasi a koji da se upali kad dodje vreme da se posalje signal kazaljki sata. U medjuvremenu su ugasena oba pina zbog ustede. Signalizacija traje x ms.
-uint8_t br_prekida_tajmera = 0U;
+volatile uint8_t br_prekida_tajmera = 0U;
 volatile uint8_t rucni_watchdog = 0U;
 uint16_t br_debouncing_taster1 = 0U;
 uint16_t br_debouncing_taster2 = 0U;
@@ -152,6 +152,7 @@ void setup() {
   setCpuFrequencyMhz(80);   // najniza brzina radnog takta
   Serial.begin(115200);
   EEPROM.begin(512);
+   rtc_clk_slow_freq_set(RTC_SLOW_FREQ_32K_XTAL);
 
   timer0 = timerBegin(0, 80U, true);      // inicijalizacija tajmera koji meri vreme, za postavljanje stanja na pinove
   timerAttachInterrupt(timer0, &onTimer0, true);
