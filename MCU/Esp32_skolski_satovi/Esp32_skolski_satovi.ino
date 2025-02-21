@@ -22,7 +22,7 @@
 #include "esp_system.h"
 #include "driver/rtc_io.h"
 #include "soc/rtc.h"
-
+#include "esp_task_wdt.h"
 
 
 
@@ -107,13 +107,14 @@ uint8_t br_sek_taster_zvono_pritisnut = 0U; // taster mora biti pritisnut neko v
 bool pritisnut_taster_zvono = false;      // ako je registrovano LOW na pinu za taster zvona
 volatile uint8_t trajanje_sinhronizacije = 0U; // treba nam info koliko je sinhronizacija trajala, ako propadne, da se precizno nadoknadi vreme
 volatile int br = 0;
+bool dnevni_rezim = true; // ucestanost sinhronizacija je razlicita po danu i po noci
 
 vector<uint8_t> raspored_zvona_sati;    // spisak svih sati kad treba zvoniti
 vector<uint8_t> raspored_zvona_min;   // spisak svih minuta kad treba zvoniti (uslov da zvoni jeste da se poklapa i sat i minuta iz oba vektora sa trenutnim vremenom)
 
 
 uint8_t vreme_sync[] = {3U, 6U, 9U, 12U, 14U, 17U, 19U, 22U, 24U, 27U, 29U, 32U, 34U, 37U, 39U, 42U, 44U, 47U, 49U, 52U, 54U, 57U, 59U};    // vreme sinhronizacije u toku jednog sata, svakih 5min
-
+uint8_t vreme_restart[] = {12,23,34,46,52}; // test
 
 struct tm rtcTime;
 
@@ -146,13 +147,16 @@ void upisiPodatak(int adresa, int vrednost, uint8_t duzina);    // upisivanje i 
 template<typename T> T ocitajPodatak(int adresa);
 void ucitaj_iz_memorije();    // ucitavanje svih podataka iz memorije
 int duzina_char_stringa(char str[]);
+void reset();  // resetovanje sistema
 
 void setup() {
 
   setCpuFrequencyMhz(80);   // najniza brzina radnog takta
+  
   Serial.begin(115200);
   EEPROM.begin(512);
-   rtc_clk_slow_freq_set(RTC_SLOW_FREQ_32K_XTAL);
+  rtc_clk_32k_enable(true);
+  rtc_clk_slow_freq_set(RTC_SLOW_FREQ_32K_XTAL);
 
   timer0 = timerBegin(0, 80U, true);      // inicijalizacija tajmera koji meri vreme, za postavljanje stanja na pinove
   timerAttachInterrupt(timer0, &onTimer0, true);
@@ -190,63 +194,14 @@ void setup() {
   ucitaj_iz_memorije();
 
   delay(150);
-  sinhronizacija_u_toku = true;
-  WiFi.mode(WIFI_STA);   // stanica, povezuje se na AP (router)
-  WiFi.begin(ssid_STA, password_STA); // inicijalizacija WiFi kao stanice, za povezivanje na druge WiFi mreze
-
-  uint8_t br_pokusaja = 0U;
-  while(WiFi.status() != WL_CONNECTED && br_pokusaja < BR_POKUSAJA_POVEZIVANJA){   // povezivanje na WiFi mrezu (koja ima internet), konacan broj puta, ako je neuspesno, izadji
-    Serial.write(".");
-    br_pokusaja += 1U;
-    delay(1000U);
-  }
-  if(br_pokusaja < BR_POKUSAJA_POVEZIVANJA){
-    povezan = true;
-    Serial.println(WiFi.localIP()); // IP od rutera
-  }
-  else{
-    povezan = false;
-  }
+  sinhronizacija();
   
-  if(povezan){
-    configTime(gmtPomak, letnje_aktivno, NTP_server); // podesavanje vremena i dobijanje info sa servera, postavlja se u interni RTC. ovo salje zahtev ka internet serveru koji daje vreme
-  }
-
-  struct tm timeinfo;
-  getLocalTime(&timeinfo);    // uzimanje vrednosti iz RTC i upis u objekat strukture
-  if(br_pokusaja < BR_POKUSAJA_POVEZIVANJA){
-    status_sistema = STATUS_OK;
-  }
-  else{
-    status_sistema = STATUS_ERR_UNKNOWN_TIME;
-  }
-  br_pokusaja = 0U;
-
-  WiFi.disconnect(true, true);      // prekidanje veze sa ruterom kad se dobije potreban podatak
-  delay(100U);
-  sinhronizacija_u_toku = false;
-  rucni_watchdog = 0U;
-
-  WiFi.mode(WIFI_AP);     // od sad radi u rezimu AP (druge stanice se povezuju na njega)
   if (WiFi.softAP(ssid_AP, password_AP)) {  // inicijalizacija sopstvene WiFi mreze
       Serial.println("kreirana mreza");
   }  
   server.begin();     // pokretanje mreze
 
   delay(500U);
-
-      // prepisivanje dobijenog sadrzaja sa internet servera koji daje datum/vreme
-  v.sek = timeinfo.tm_sec;
-  v.min = timeinfo.tm_min;
-  v.sat = timeinfo.tm_hour;
-  v.dan = timeinfo.tm_mday;
-  v.dan_u_nedelji = timeinfo.tm_wday;
-  v.mesec = timeinfo.tm_mon + 1U;
-  v.god = timeinfo.tm_year + 1900U;
-
-  Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
-  Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
-
 
 }
 
@@ -353,11 +308,11 @@ void vremenski_pomak(){
     //sinhronizacija();
     v.sek = 0U;
     v.min += 1U;
-
-    if((v.sat == 5U) && (v.min == 30U)){    // restartovanje jednom dnevno
-      ESP.restart();
+/*
+    if((v.sat == 16) && (v.min == 7)){    // restartovanje jednom dnevno
+      reset();
     }
-
+*/
     if(!u_toku_automatsko_podesavanje_sata){
       posalji_impuls_kazaljka();
     }
@@ -406,8 +361,18 @@ void vremenski_pomak(){
     Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
     Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));  
 
-    for(uint8_t i = 0; i < BROJ_SINHRONIZACIJA_U_SATU; i++){
-      if((v.min == vreme_sync[i])){
+    if(v.sat >= 5 && v.sat <= 21){   //   5-22h
+      dnevni_rezim = true;
+      for(uint8_t i = 0; i < BROJ_SINHRONIZACIJA_U_SATU; i++){
+        if((v.min == vreme_sync[i])){
+          sinhronizacija();
+        }
+      }
+    }
+    else{
+      WiFi.mode(WIFI_OFF);      
+      dnevni_rezim = false;
+      if(v.min == 15 || v.min == 45){
         sinhronizacija();
       }
     }
@@ -493,6 +458,19 @@ void sinhronizacija(){
   rucni_watchdog = 0U;
   trajanje_sinhronizacije = 0U;
   WiFi.mode(WIFI_AP);   // kad se zavrsi sinhronizacija, povratak u WiFi rezim AP
+}
+
+void reset(){
+  WiFi.disconnect(true, true);
+  WiFi.mode(WIFI_OFF);
+  rtc_clk_slow_freq_set(RTC_SLOW_FREQ_RTC);
+  delay(200U);
+  ESP.restart();
+/*
+  esp_task_wdt_init(1, true);
+  esp_task_wdt_add(NULL);
+  while(true);
+  */
 }
 
 void posalji_impuls_kazaljka(){
