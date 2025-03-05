@@ -45,7 +45,7 @@ using namespace std;
 #define BR_POKUSAJA_POVEZIVANJA 20
 #define DEBOUNCING_INTERVAL1 10000    // preciznije saltanje kazaljke, sporije, u blizini odredjene minute
 #define DEBOUNCING_INTERVAL2 1000   // brze saltanje kazaljke, za brze dostizanje odredjenog sata i minute
-#define TIMEOUT_POVEZIVANJE 30U   // interval povezivanja, ako premasi, restart
+#define TIMEOUT_POVEZIVANJE 70U   // interval povezivanja, ako premasi, restart
 #define BROJ_SINHRONIZACIJA_U_SATU 23
 
 #define STATUS_OK 0   // sve je u redu
@@ -69,6 +69,7 @@ typedef struct{       // struktura koja opisuje vremensku odrednicu, sve info o 
 
 const char* ssid_AP = "SAT_ESP32";     
 const char* password_AP = "jswomvjknmc";
+//const char* password_AP = "tisovac2";
 
 char ssid_STA[MAX_DUZINA_SSID] = "default";
 char password_STA[MAX_DUZINA_PASSWORD] = "password";
@@ -151,12 +152,21 @@ void reset();  // resetovanje sistema
 
 void setup() {
 
+  delay(1000U);
   setCpuFrequencyMhz(80);   // najniza brzina radnog takta
   
+/*  esp_reset_reason_t razlog_reseta = esp_reset_reason();
+  rtc_clk_slow_freq_set(RTC_SLOW_FREQ_RTC);
+  if(razlog_reseta != ESP_RST_WDT && razlog_reseta != ESP_RST_SW){
+    rtc_clk_32k_enable(true);
+    delay(500U);
+    rtc_clk_slow_freq_set(RTC_SLOW_FREQ_32K_XTAL);
+  }
+*/
   Serial.begin(115200);
   EEPROM.begin(512);
-  rtc_clk_32k_enable(true);
-  rtc_clk_slow_freq_set(RTC_SLOW_FREQ_32K_XTAL);
+ /* rtc_clk_32k_enable(true);
+  rtc_clk_slow_freq_set(RTC_SLOW_FREQ_32K_XTAL);*/
 
   timer0 = timerBegin(0, 80U, true);      // inicijalizacija tajmera koji meri vreme, za postavljanje stanja na pinove
   timerAttachInterrupt(timer0, &onTimer0, true);
@@ -193,7 +203,7 @@ void setup() {
 
   ucitaj_iz_memorije();
 
-  delay(150);
+  delay(150U);
   sinhronizacija();
   
   if (WiFi.softAP(ssid_AP, password_AP)) {  // inicijalizacija sopstvene WiFi mreze
@@ -201,15 +211,23 @@ void setup() {
   }  
   server.begin();     // pokretanje mreze
 
+  esp_task_wdt_init(TIMEOUT_POVEZIVANJE, true);   // watchdog timer
+  esp_task_wdt_add(NULL);   // dodavanje ovog task-a
+/*
+  rtc_clk_slow_freq_set(RTC_SLOW_FREQ_32K_XTAL);
+  rtc_clk_32k_enable(true);
+  */
   delay(500U);
 
 }
 
 void loop() {
 
+ // esp_task_wdt_reset();   // sprecavanje reseta ako se izvrsava kod normalno
 
   if(!client)client = server.available();   // provera da li je neko pokusao da se poveze na mrezu od ESP32, ako jeste vraca objekat client
   else{
+    Serial.println("klijent povezan");
     if(client.connected()){   // provera da li je veza aktivna i validna
       while (client.available()) {     //ako postoje podaci za citanje sa WiFi, available() vraca broj bajtova koji su primljeni od klijenta
         String str = client.readStringUntil('.');
@@ -219,6 +237,8 @@ void loop() {
         String ack = "t";
         client.println(ack);    // obavestavanje posiljaoca da je poruka uspesno primljena
         delay(2);
+        /*char c = client.read();  // Čitamo bajt po bajt
+        Serial.write(c);  // Šaljemo bajtove na Serial Monitor*/
       }
     }
     else{
@@ -244,13 +264,15 @@ void loop() {
     if(!sinhronizacija_u_toku){
       v.sek += 1;
     }
-    else if(sinhronizacija_u_toku){
+   /* else if(sinhronizacija_u_toku){
       rucni_watchdog += 1U;
-      if(rucni_watchdog > TIMEOUT_POVEZIVANJE){     // 30sec za povezivanje, ako premasi, restart MCU
-        ESP.restart();
+      if(rucni_watchdog > TIMEOUT_POVEZIVANJE){     // 30sec za povezivanje, ako premasi
+        WiFi.mode(WIFI_OFF);
+        delay(100U);
+        sinhronizacija();
       }
     }
-
+  */
     if(pritisnut_taster_zvono){
       br_sek_taster_zvono_pritisnut += 1;
     }
@@ -308,11 +330,10 @@ void vremenski_pomak(){
     //sinhronizacija();
     v.sek = 0U;
     v.min += 1U;
-/*
-    if((v.sat == 16) && (v.min == 7)){    // restartovanje jednom dnevno
-      reset();
-    }
-*/
+
+    rtc_clk_32k_enable(true);
+    rtc_clk_slow_freq_set(RTC_SLOW_FREQ_32K_XTAL);
+
     if(!u_toku_automatsko_podesavanje_sata){
       posalji_impuls_kazaljka();
     }
@@ -372,11 +393,16 @@ void vremenski_pomak(){
     else{
       WiFi.mode(WIFI_OFF);      
       dnevni_rezim = false;
-      if(v.min == 15 || v.min == 45){
+      if(v.min == 2 || v.min == 32){
         sinhronizacija();
       }
     }
-
+/*
+    if(v.sat == 18 && v.min == 33){
+      delay(2000U);
+      reset();
+    }
+*/
     vector<uint8_t>::iterator it1;
     vector<uint8_t>::iterator it2;
     int i = 0;
@@ -418,7 +444,9 @@ void sinhronizacija(){
   }
   else{
     povezan = false;
-    status_sistema = STATUS_WARNING_TIME_NOT_CORRECTED;
+    if(status_sistema == STATUS_OK || status_sistema == STATUS_WARNING_TIME_NOT_CORRECTED){
+      status_sistema = STATUS_WARNING_TIME_NOT_CORRECTED;
+    }
   }
 
   if(povezan){
@@ -429,12 +457,13 @@ void sinhronizacija(){
   struct tm timeinfo;
   getLocalTime(&timeinfo);    // citanje iz RTC
 
-  if(br_pokusaja >= BR_POKUSAJA_POVEZIVANJA){   // neuspesno
+  if(/*br_pokusaja >= BR_POKUSAJA_POVEZIVANJA*/ !povezan){   // neuspesno
     if(status_sistema == STATUS_OK || status_sistema == STATUS_WARNING_TIME_NOT_CORRECTED){
       status_sistema = STATUS_WARNING_TIME_NOT_CORRECTED;
     }
     v.sek = timeinfo.tm_sec;      // propala sinhronizacija, uzimanje vremena iz RTC
     v.min = timeinfo.tm_min;
+    v.sat = timeinfo.tm_hour;
   }
   else{     // uspesno
     v.sek = 0U;
@@ -463,14 +492,10 @@ void sinhronizacija(){
 void reset(){
   WiFi.disconnect(true, true);
   WiFi.mode(WIFI_OFF);
-  rtc_clk_slow_freq_set(RTC_SLOW_FREQ_RTC);
+  //rtc_clk_slow_freq_set(RTC_SLOW_FREQ_RTC);
   delay(200U);
-  ESP.restart();
-/*
-  esp_task_wdt_init(1, true);
-  esp_task_wdt_add(NULL);
-  while(true);
-  */
+  int8_t br = 0;
+  while(br < (TIMEOUT_POVEZIVANJE + 5)){br+=1;}   // do aktivacije watchdog
 }
 
 void posalji_impuls_kazaljka(){
