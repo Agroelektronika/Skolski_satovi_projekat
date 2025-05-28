@@ -22,9 +22,10 @@
 #include "esp_system.h"
 #include "driver/rtc_io.h"
 #include "soc/rtc.h"
-#include "esp_task_wdt.h"
-
-
+#include "esp_task_wdt.h"   // watchdog
+#include <TM1637Display.h>    // 7SEG displej
+#include <RTClib.h>         // rad sa eksternim kolom za vreme
+#include <Wire.h> // I2C
 
 using namespace std;
 
@@ -37,6 +38,9 @@ using namespace std;
 #define PIN_TASTER1 4   // kazaljka napred
 #define PIN_TASTER2 15   // zvono
  
+ // DS3231 RTC Pins
+#define I2C_SDA 26
+#define I2C_SCL 27
 
 #define MAX_DUZINA 25
 #define MAX_DUZINA_SSID 32
@@ -45,7 +49,7 @@ using namespace std;
 #define BR_POKUSAJA_POVEZIVANJA 20
 #define DEBOUNCING_INTERVAL1 10000    // preciznije saltanje kazaljke, sporije, u blizini odredjene minute
 #define DEBOUNCING_INTERVAL2 1000   // brze saltanje kazaljke, za brze dostizanje odredjenog sata i minute
-#define TIMEOUT_POVEZIVANJE 70U   // interval povezivanja, ako premasi, restart
+#define TIMEOUT_POVEZIVANJE 40U   // interval povezivanja, ako premasi, restart
 #define BROJ_SINHRONIZACIJA_U_SATU 23
 
 #define STATUS_OK 0   // sve je u redu
@@ -76,7 +80,7 @@ char password_STA[MAX_DUZINA_PASSWORD] = "password";
 
 char NTP_server[MAX_DUZINA] = "pool.ntp.org";   // internet server za primanje info o vremenu
 const long gmtPomak = 3600U;       // Pomak u sekundama od GMT (za CET 3600)
-const int letnje_aktivno = 3600U;   // Letnje računanje vremena (ako je aktivno)
+const int letnje_aktivno = 0;   // Letnje računanje vremena
 
 WiFiClient client;
 WiFiServer server(80);
@@ -131,6 +135,10 @@ portMUX_TYPE timerMux2 = portMUX_INITIALIZER_UNLOCKED;
 portMUX_TYPE muxTaster1 = portMUX_INITIALIZER_UNLOCKED;                  //za external interrupt
 portMUX_TYPE muxTaster2 = portMUX_INITIALIZER_UNLOCKED; 
 
+
+RTC_DS3231 vreme_externo_kolo;
+
+
 void IRAM_ATTR onTimer0();    // prekidne rutine unutrasnjeg tajmera i spoljasnjih tastera
 void IRAM_ATTR onTimer1();    // prekidne rutine unutrasnjeg tajmera i spoljasnjih tastera
 void IRAM_ATTR handleExternalTaster1();
@@ -155,18 +163,11 @@ void setup() {
   delay(1000U);
   setCpuFrequencyMhz(80);   // najniza brzina radnog takta
   
-/*  esp_reset_reason_t razlog_reseta = esp_reset_reason();
-  rtc_clk_slow_freq_set(RTC_SLOW_FREQ_RTC);
-  if(razlog_reseta != ESP_RST_WDT && razlog_reseta != ESP_RST_SW){
-    rtc_clk_32k_enable(true);
-    delay(500U);
-    rtc_clk_slow_freq_set(RTC_SLOW_FREQ_32K_XTAL);
-  }
-*/
+
   Serial.begin(115200);
   EEPROM.begin(512);
- /* rtc_clk_32k_enable(true);
-  rtc_clk_slow_freq_set(RTC_SLOW_FREQ_32K_XTAL);*/
+ // rtc_clk_slow_freq_set(RTC_SLOW_FREQ_RTC);   // 33kHz, interni oscilator
+
 
   timer0 = timerBegin(0, 80U, true);      // inicijalizacija tajmera koji meri vreme, za postavljanje stanja na pinove
   timerAttachInterrupt(timer0, &onTimer0, true);
@@ -212,22 +213,37 @@ void setup() {
   server.begin();     // pokretanje mreze
 
   esp_task_wdt_init(TIMEOUT_POVEZIVANJE, true);   // watchdog timer
-  esp_task_wdt_add(NULL);   // dodavanje ovog task-a
-/*
-  rtc_clk_slow_freq_set(RTC_SLOW_FREQ_32K_XTAL);
-  rtc_clk_32k_enable(true);
-  */
+  esp_task_wdt_add(NULL);   // dodavanje ovog task-a, za watchdog
+
+  Wire.begin(I2C_SDA, I2C_SCL);
+  if(!vreme_externo_kolo.begin()){
+    Serial.println("neuspesna inicijalizacija");
+  //  while(1){}
+  }
+
+ // vreme_externo_kolo.adjust(DateTime(v.god, v.mesec, v.dan, v.sat, v.min, v.sek));
+  vreme_externo_kolo.adjust(DateTime(F(__DATE__), F(__TIME__)));
+/*  if(vreme_externo_kolo.lostPower()) {
+        rtc.adjust(DateTime(F(__DATE__), F(__TIME__))); // postavljanje vremena pri kompilaciji
+    }*/
+  //rtc.disable32K();
+
+
+ // rtc_clk_32k_enable(true);
+//  rtc_clk_slow_freq_set(RTC_SLOW_FREQ_32K_XTAL);
+
+//  Serial.println(rtc_clk_slow_freq_get());
   delay(500U);
 
 }
 
 void loop() {
 
- // esp_task_wdt_reset();   // sprecavanje reseta ako se izvrsava kod normalno
+  esp_task_wdt_reset();   // sprecavanje reseta ako se izvrsava kod normalno
 
   if(!client)client = server.available();   // provera da li je neko pokusao da se poveze na mrezu od ESP32, ako jeste vraca objekat client
   else{
-    Serial.println("klijent povezan");
+   // Serial.println("klijent povezan");
     if(client.connected()){   // provera da li je veza aktivna i validna
       while (client.available()) {     //ako postoje podaci za citanje sa WiFi, available() vraca broj bajtova koji su primljeni od klijenta
         String str = client.readStringUntil('.');
@@ -255,6 +271,11 @@ void loop() {
   if(prekid_tajmera){   // prosla 1sec
    // Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
    // Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
+
+    DateTime datum = vreme_externo_kolo.now();
+
+    //Serial.println(String(datum.year()));
+
     if(br_prekida_tajmera > 4){
       digitalWrite(PIN_KAZALJKA1, LOW);   // nakon kraceg intervala od pocetka minute, oba pina staviti na LOW zbog ustede
       digitalWrite(PIN_KAZALJKA2, LOW);
@@ -397,12 +418,7 @@ void vremenski_pomak(){
         sinhronizacija();
       }
     }
-/*
-    if(v.sat == 18 && v.min == 33){
-      delay(2000U);
-      reset();
-    }
-*/
+
     vector<uint8_t>::iterator it1;
     vector<uint8_t>::iterator it2;
     int i = 0;
@@ -450,7 +466,8 @@ void sinhronizacija(){
   }
 
   if(povezan){
-    configTime(gmtPomak, letnje_aktivno, NTP_server); // slanje zahteva ka internet serveru koji daje date/time, upis u RTC
+    //configTime(gmtPomak, letnje_aktivno, NTP_server); // slanje zahteva ka internet serveru koji daje date/time, upis u RTC
+    configTzTime("CET-1CEST,M3.5.0,M10.5.0/3", NTP_server);   // slanje zahteva ka internet serveru koji daje date/time, upis u RTC, automatsko prepoznavanje letnjeg racunanja vremena
     Serial.println("Povezan na ruter!");
     delay(2000U);
   }
@@ -469,18 +486,22 @@ void sinhronizacija(){
     v.sek = 0U;
     v.min = 0U;
     v.sat = 0U;
-    v.sek = timeinfo.tm_sec;      // nakon dobijenih info, osvezavanje vremena (korekcija)
-    v.min = timeinfo.tm_min;
-    v.sat = timeinfo.tm_hour;
-    v.dan = timeinfo.tm_mday;
-    v.dan_u_nedelji = timeinfo.tm_wday;
-    v.mesec = timeinfo.tm_mon + 1U;
-    v.god = timeinfo.tm_year + 1900U;
+    DateTime datum = vreme_externo_kolo.now();
+    v.sek = datum.second();      // nakon dobijenih info, osvezavanje vremena (korekcija)
+    v.min = datum.minute();
+    v.sat = datum.hour();
+    v.dan = datum.day();
+    //v.dan_u_nedelji = timeinfo.tm_wday;
+    v.mesec = datum.month();
+    v.god = datum.year();
     sinhronizovan = true;
     status_sistema = STATUS_OK;
     Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
     Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
   }
+  const DateTime vreme_datum(v.god, v.mesec, v.dan, v.sat, v.min, v.sek);
+ // vreme_externo_kolo.adjust(ref(vreme_datum));
+ // vreme_externo_kolo.adjust(DateTime(v.god, v.mesec, v.dan, v.sat, v.min, v.sek));
   WiFi.disconnect(true, true);
   delay(100U);
   sinhronizacija_u_toku = false;
