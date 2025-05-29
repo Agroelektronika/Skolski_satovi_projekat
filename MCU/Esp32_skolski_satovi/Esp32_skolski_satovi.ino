@@ -205,7 +205,7 @@ void setup() {
   ucitaj_iz_memorije();
 
   delay(150U);
-  sinhronizacija();
+  
   
   if (WiFi.softAP(ssid_AP, password_AP)) {  // inicijalizacija sopstvene WiFi mreze
       Serial.println("kreirana mreza");
@@ -220,9 +220,28 @@ void setup() {
     Serial.println("neuspesna inicijalizacija");
   //  while(1){}
   }
+  sinhronizacija();
 
- // vreme_externo_kolo.adjust(DateTime(v.god, v.mesec, v.dan, v.sat, v.min, v.sek));
-  vreme_externo_kolo.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  //vreme_externo_kolo.disable32K();
+  DateTime dt(v.god, v.mesec, v.dan, v.sat, v.min, v.sek);
+  //DateTime dt(2025, 5, 29, 9, 5, 0);
+ /* Wire.beginTransmission(0x68);
+  if(Wire.endTransmission() != 0) {
+    Serial.println("I2C greska - RTC nedostupan");
+    return;
+  }*/
+ // noInterrupts();
+  vreme_externo_kolo.adjust(dt);
+  delay(1000);
+ /* DateTime datum = vreme_externo_kolo.now();
+  v.sek = datum.second();      // nakon dobijenih info, osvezavanje vremena (korekcija)
+  v.min = datum.minute();
+  v.sat = datum.hour();
+  v.dan = datum.day();*/
+  Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
+  Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
+
+ // vreme_externo_kolo.adjust(DateTime(F(__DATE__), F(__TIME__)));
 /*  if(vreme_externo_kolo.lostPower()) {
         rtc.adjust(DateTime(F(__DATE__), F(__TIME__))); // postavljanje vremena pri kompilaciji
     }*/
@@ -478,22 +497,26 @@ void sinhronizacija(){
     if(status_sistema == STATUS_OK || status_sistema == STATUS_WARNING_TIME_NOT_CORRECTED){
       status_sistema = STATUS_WARNING_TIME_NOT_CORRECTED;
     }
-    v.sek = timeinfo.tm_sec;      // propala sinhronizacija, uzimanje vremena iz RTC
-    v.min = timeinfo.tm_min;
-    v.sat = timeinfo.tm_hour;
-  }
-  else{     // uspesno
-    v.sek = 0U;
-    v.min = 0U;
-    v.sat = 0U;
     DateTime datum = vreme_externo_kolo.now();
     v.sek = datum.second();      // nakon dobijenih info, osvezavanje vremena (korekcija)
     v.min = datum.minute();
     v.sat = datum.hour();
     v.dan = datum.day();
-    //v.dan_u_nedelji = timeinfo.tm_wday;
     v.mesec = datum.month();
     v.god = datum.year();
+  }
+  else{     // uspesno
+    v.sek = 0U;
+    v.min = 0U;
+    v.sat = 0U;
+    //DateTime datum = vreme_externo_kolo.now();
+    v.sek = timeinfo.tm_sec;      // propala sinhronizacija, uzimanje vremena iz RTC
+    v.min = timeinfo.tm_min;
+    v.sat = timeinfo.tm_hour;
+    v.dan = timeinfo.tm_mday;
+    //v.dan_u_nedelji = timeinfo.tm_wday;
+    v.mesec = timeinfo.tm_mon;
+    v.god = timeinfo.tm_year;
     sinhronizovan = true;
     status_sistema = STATUS_OK;
     Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
