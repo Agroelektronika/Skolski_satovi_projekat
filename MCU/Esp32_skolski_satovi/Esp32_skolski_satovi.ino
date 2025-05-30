@@ -32,15 +32,22 @@ using namespace std;
 // izlazni
 #define PIN_KAZALJKA1 33  // 2 pina za teranje kazaljki, naizmenicno menjanje njihovih stanja za pokretanje kazaljke
 #define PIN_KAZALJKA2 12
-#define PIN_ZVONO 13    
+#define PIN_ZVONO_OUT 21    
 
 // ulazni
-#define PIN_TASTER1 4   // kazaljka napred
-#define PIN_TASTER2 15   // zvono
+#define PIN_KAZALJKA_NAPRED 13   // kazaljka napred
+#define PIN_ZVONO_IN 3   // zvono
+#define PIN_SYNC 2  // sinhronizacija
  
  // DS3231 RTC Pins
 #define I2C_SDA 26
 #define I2C_SCL 27
+
+// TM1637 Dislej Pinovi
+#define CLK_PIN 19
+#define DIO_PIN 18
+TM1637Display displej(CLK_PIN, DIO_PIN);  //7SEG displej
+
 
 #define MAX_DUZINA 25
 #define MAX_DUZINA_SSID 32
@@ -51,6 +58,7 @@ using namespace std;
 #define DEBOUNCING_INTERVAL2 1000   // brze saltanje kazaljke, za brze dostizanje odredjenog sata i minute
 #define TIMEOUT_POVEZIVANJE 40U   // interval povezivanja, ako premasi, restart
 #define BROJ_SINHRONIZACIJA_U_SATU 23
+#define START_DELAY 18000
 
 #define STATUS_OK 0   // sve je u redu
 #define STATUS_ERR_UNKNOWN_TIME 1 // neuspelo povezivanje pri paljenju sistema, ne zna vreme
@@ -67,6 +75,26 @@ typedef struct{       // struktura koja opisuje vremensku odrednicu, sve info o 
   uint8_t mesec;
   uint16_t god;
 } Vreme;
+
+const uint8_t digitToSegment[] = {
+ // XGFEDCBA
+  0b00111111,    // 0
+  0b00000110,    // 1
+  0b01011011,    // 2
+  0b01001111,    // 3
+  0b01100110,    // 4
+  0b01101101,    // 5
+  0b01111101,    // 6
+  0b00000111,    // 7
+  0b01111111,    // 8
+  0b01101111,    // 9
+  0b01110111,    // A
+  0b01111100,    // b
+  0b00111001,    // C
+  0b01011110,    // d
+  0b01111001,    // E
+  0b01110001     // F
+  };
 
 // AP - Access Point - na njega se povezuju
 // STA - Station - povezuje se na druge AP
@@ -89,8 +117,10 @@ String str_za_wifi = "";
 Vreme v;
 volatile bool sinhronizovan = false;
 volatile bool prekid_tajmera = false;   // menja se u ISR
-bool prekid_tastera1 = false;
-bool prekid_tastera2 = false;
+bool pokretanje = true;  // pokretanje sistema, prva sinhronizacija
+volatile bool prekid_tastera1 = false;
+volatile bool prekid_tastera2 = false;
+volatile bool prekid_tastera3 = false;
 bool prestupna_godina = false;
 volatile uint8_t status_sistema = STATUS_ERR_UNKNOWN_TIME;   // varijabla koja govori u kom stanju se nalazi sistem
 bool povezan = false;
@@ -99,6 +129,8 @@ volatile uint8_t br_prekida_tajmera = 0U;
 volatile uint8_t rucni_watchdog = 0U;
 uint16_t br_debouncing_taster1 = 0U;
 uint16_t br_debouncing_taster2 = 0U;
+uint16_t br_debouncing_taster3 = 0U;
+uint16_t br_od_starta = 0U;
 
 uint8_t sinhronizacija_sati = 6;    // vreme sinhronizacije sa sistemskim vremenom, preko interneta
 uint8_t sinhronizacija_min = 30;
@@ -113,10 +145,11 @@ bool pritisnut_taster_zvono = false;      // ako je registrovano LOW na pinu za 
 volatile uint8_t trajanje_sinhronizacije = 0U; // treba nam info koliko je sinhronizacija trajala, ako propadne, da se precizno nadoknadi vreme
 volatile int br = 0;
 bool dnevni_rezim = true; // ucestanost sinhronizacija je razlicita po danu i po noci
+uint8_t br_pokusaja_sinhronizacije = 0;
 
 vector<uint8_t> raspored_zvona_sati;    // spisak svih sati kad treba zvoniti
 vector<uint8_t> raspored_zvona_min;   // spisak svih minuta kad treba zvoniti (uslov da zvoni jeste da se poklapa i sat i minuta iz oba vektora sa trenutnim vremenom)
-
+uint8_t segmenti[] = {0xff, 0xff, 0xff, 0xff};  // segmenti 
 
 uint8_t vreme_sync[] = {3U, 6U, 9U, 12U, 14U, 17U, 19U, 22U, 24U, 27U, 29U, 32U, 34U, 37U, 39U, 42U, 44U, 47U, 49U, 52U, 54U, 57U, 59U};    // vreme sinhronizacije u toku jednog sata, svakih 5min
 uint8_t vreme_restart[] = {12,23,34,46,52}; // test
@@ -134,7 +167,7 @@ portMUX_TYPE timerMux2 = portMUX_INITIALIZER_UNLOCKED;
 
 portMUX_TYPE muxTaster1 = portMUX_INITIALIZER_UNLOCKED;                  //za external interrupt
 portMUX_TYPE muxTaster2 = portMUX_INITIALIZER_UNLOCKED; 
-
+portMUX_TYPE muxTaster3 = portMUX_INITIALIZER_UNLOCKED;
 
 RTC_DS3231 vreme_externo_kolo;
 
@@ -143,8 +176,10 @@ void IRAM_ATTR onTimer0();    // prekidne rutine unutrasnjeg tajmera i spoljasnj
 void IRAM_ATTR onTimer1();    // prekidne rutine unutrasnjeg tajmera i spoljasnjih tastera
 void IRAM_ATTR handleExternalTaster1();
 void IRAM_ATTR handleExternalTaster2();
+void IRAM_ATTR handleExternalTaster3();
 void vremenski_pomak();     // na osnovnu vremenskih info (sek, min, sat...) pomera ostale vrednosti u skladu sa pravilima
 void sinhronizacija();   // povezivanje na internet server i sinhronizacija sa vremenskom zonom, korekcija akumulirane greske, jednom dnevno
+void sinhronizacija_internet();
 void posalji_impuls_kazaljka();  // postavlja stanja pinova tako da pokrene mehanizam kazaljke sata
 void upali_zvono();       // postavlja stanje pina tako da upali zvono
 void posalji_stanje_WiFi();      // salje preko WiFi stanje Android uredjaju
@@ -157,17 +192,17 @@ template<typename T> T ocitajPodatak(int adresa);
 void ucitaj_iz_memorije();    // ucitavanje svih podataka iz memorije
 int duzina_char_stringa(char str[]);
 void reset();  // resetovanje sistema
+uint8_t izdvoj_cifru_broja(uint8_t broj, uint8_t indeks);
+uint8_t kodiraj_cifru(uint8_t cifra);
 
 void setup() {
 
   delay(1000U);
   setCpuFrequencyMhz(80);   // najniza brzina radnog takta
   
-
   Serial.begin(115200);
   EEPROM.begin(512);
- // rtc_clk_slow_freq_set(RTC_SLOW_FREQ_RTC);   // 33kHz, interni oscilator
-
+  // rtc_clk_slow_freq_set(RTC_SLOW_FREQ_RTC);   // 33kHz, interni oscilator
 
   timer0 = timerBegin(0, 80U, true);      // inicijalizacija tajmera koji meri vreme, za postavljanje stanja na pinove
   timerAttachInterrupt(timer0, &onTimer0, true);
@@ -181,18 +216,21 @@ void setup() {
   timerAlarmWrite(timer1, 250000, true);     // korak od 250ms
   //timerAlarmEnable(timer1);
 
-  pinMode(PIN_TASTER1, INPUT_PULLUP);    // tasteri na ulaznim pinovima
-  pinMode(PIN_TASTER2, INPUT_PULLUP);    //
-
+  pinMode(PIN_KAZALJKA_NAPRED, INPUT_PULLUP);    // tasteri na ulaznim pinovima
+  pinMode(PIN_ZVONO_IN, INPUT_PULLUP);    //
+  pinMode(PIN_SYNC, INPUT_PULLUP); 
+  attachInterrupt(digitalPinToInterrupt(PIN_KAZALJKA_NAPRED), handleExternalTaster1, FALLING);
+  attachInterrupt(digitalPinToInterrupt(PIN_ZVONO_IN), handleExternalTaster2, FALLING);
+  attachInterrupt(digitalPinToInterrupt(PIN_SYNC), handleExternalTaster3, FALLING);
   
   pinMode(PIN_KAZALJKA1, OUTPUT);   // 2 pina za upravljanje kazaljkama
   digitalWrite(PIN_KAZALJKA1, LOW);
-
+  
   pinMode(PIN_KAZALJKA2, OUTPUT);   
   digitalWrite(PIN_KAZALJKA2, HIGH);
 
-  pinMode(PIN_ZVONO, OUTPUT);   
-  digitalWrite(PIN_ZVONO, HIGH);    // HIGH je iskljuceno zvono, LOW je ukljuceno
+  pinMode(PIN_ZVONO_OUT, OUTPUT);   
+  digitalWrite(PIN_ZVONO_OUT, HIGH);    // HIGH je iskljuceno zvono, LOW je ukljuceno
 
   v.sek = 0U;
   v.min = 0U;
@@ -205,7 +243,6 @@ void setup() {
   ucitaj_iz_memorije();
 
   delay(150U);
-  
   
   if (WiFi.softAP(ssid_AP, password_AP)) {  // inicijalizacija sopstvene WiFi mreze
       Serial.println("kreirana mreza");
@@ -223,35 +260,40 @@ void setup() {
   sinhronizacija();
 
   //vreme_externo_kolo.disable32K();
-  DateTime dt(v.god, v.mesec, v.dan, v.sat, v.min, v.sek);
-  //DateTime dt(2025, 5, 29, 9, 5, 0);
- /* Wire.beginTransmission(0x68);
-  if(Wire.endTransmission() != 0) {
-    Serial.println("I2C greska - RTC nedostupan");
-    return;
-  }*/
- // noInterrupts();
-  vreme_externo_kolo.adjust(dt);
-  delay(1000);
+ // DateTime dt(v.god, v.mesec, v.dan, v.sat, v.min, v.sek);
+ // vreme_externo_kolo.adjust(dt);
+  delay(1000U);
  /* DateTime datum = vreme_externo_kolo.now();
   v.sek = datum.second();      // nakon dobijenih info, osvezavanje vremena (korekcija)
   v.min = datum.minute();
   v.sat = datum.hour();
   v.dan = datum.day();*/
+
   Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
   Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
 
  // vreme_externo_kolo.adjust(DateTime(F(__DATE__), F(__TIME__)));
-/*  if(vreme_externo_kolo.lostPower()) {
+  /*  if(vreme_externo_kolo.lostPower()) {
         rtc.adjust(DateTime(F(__DATE__), F(__TIME__))); // postavljanje vremena pri kompilaciji
     }*/
   //rtc.disable32K();
-
+  displej.setBrightness(0xff);
+  segmenti[0] = izdvoj_cifru_broja(v.sat, 1);
+  segmenti[1] = izdvoj_cifru_broja(v.sat, 2);
+  segmenti[2] = izdvoj_cifru_broja(v.min, 1);
+  segmenti[3] = izdvoj_cifru_broja(v.min, 2);
+  segmenti[0] = kodiraj_cifru(segmenti[0]);
+  segmenti[1] = kodiraj_cifru(segmenti[1]);
+  segmenti[2] = kodiraj_cifru(segmenti[2]);
+  segmenti[3] = kodiraj_cifru(segmenti[3]);
+  segmenti[1] |= 0x80;  // dvotacka
+  displej.setSegments(segmenti);
+ // displej.showDots();
 
  // rtc_clk_32k_enable(true);
-//  rtc_clk_slow_freq_set(RTC_SLOW_FREQ_32K_XTAL);
+  //  rtc_clk_slow_freq_set(RTC_SLOW_FREQ_32K_XTAL);
 
-//  Serial.println(rtc_clk_slow_freq_get());
+  //  Serial.println(rtc_clk_slow_freq_get());
   delay(500U);
 
 }
@@ -285,20 +327,18 @@ void loop() {
 
   vremenski_pomak();
   
-
-  
   if(prekid_tajmera){   // prosla 1sec
    // Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
    // Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
 
-    DateTime datum = vreme_externo_kolo.now();
+    //DateTime datum = vreme_externo_kolo.now();
 
     //Serial.println(String(datum.year()));
 
     if(br_prekida_tajmera > 4){
       digitalWrite(PIN_KAZALJKA1, LOW);   // nakon kraceg intervala od pocetka minute, oba pina staviti na LOW zbog ustede
       digitalWrite(PIN_KAZALJKA2, LOW);
-      digitalWrite(PIN_ZVONO, HIGH);    // ugasiti zvono
+      digitalWrite(PIN_ZVONO_OUT, HIGH);    // ugasiti zvono
     }
 
     if(!sinhronizacija_u_toku){
@@ -326,25 +366,34 @@ void loop() {
   }
 
   //Serial.println(br_debouncing_taster1);
-  if(digitalRead(PIN_TASTER1) == LOW && br_debouncing_taster1 > DEBOUNCING_INTERVAL1){      // polling, ispitivanje da li su tasteri pritisnuti
+  if(/*digitalRead(PIN_TASTER1) == LOW*/ prekid_tastera1 && br_debouncing_taster1 > DEBOUNCING_INTERVAL1){      // polling, ispitivanje da li su tasteri pritisnuti
     Serial.println("pritisak tastera 1");                                               // metoda prekida je onemogucena zbog suma u napajanju koje dolazi sa 220V, i izaziva prekide kad ne treba
     posalji_impuls_kazaljka();
     br_debouncing_taster1 = 0;
+    prekid_tastera1 = false;
   }
 
-  if(digitalRead(PIN_TASTER2) == LOW/* && br_debouncing_taster2 > DEBOUNCING_INTERVAL1*/){      // polling, ispitivanje da li su tasteri pritisnuti
+  if(/*digitalRead(PIN_TASTER2) == LOW*/ prekid_tastera2 && br_debouncing_taster2 > DEBOUNCING_INTERVAL1){      // polling, ispitivanje da li su tasteri pritisnuti
     Serial.println("pritisak tastera 2");                                               // metoda prekida je onemogucena zbog suma u napajanju koje dolazi sa 220V, i izaziva prekide kad ne treba
     pritisnut_taster_zvono = true;
     if(br_sek_taster_zvono_pritisnut >= 3U){   // duzi pritisak
       upali_zvono();
       br_prekida_tajmera = 0U;
     }
-   // br_debouncing_taster2 = 0;
+    br_debouncing_taster2 = 0;
+    prekid_tastera2 = false;
   }
-  else if(digitalRead(PIN_TASTER2) == HIGH){
+
+  if(/*digitalRead(PIN_TASTER1) == LOW*/ prekid_tastera3 && br_debouncing_taster3 > DEBOUNCING_INTERVAL1){      // polling, ispitivanje da li su tasteri pritisnuti
+    Serial.println("pritisak tastera 3");                                               // metoda prekida je onemogucena zbog suma u napajanju koje dolazi sa 220V, i izaziva prekide kad ne treba
+    sinhronizacija_internet();
+    br_debouncing_taster3 = 0;
+    prekid_tastera3 = false;
+  }
+  /*  else if(digitalRead(PIN_TASTER2) == HIGH){
     br_sek_taster_zvono_pritisnut = 0;
     pritisnut_taster_zvono = false;
-  }
+  }*/
 
  /* if(digitalRead(PIN_TASTER2) == LOW && br_debouncing_taster2 > DEBOUNCING_INTERVAL2){
     Serial.println("pritisak tastera 2");
@@ -353,13 +402,17 @@ void loop() {
     br_debouncing_taster2 = 0;
   }*/
 
-  br_debouncing_taster1++;
+  br_debouncing_taster1 += 1;
   if(br_debouncing_taster1 > 28000) br_debouncing_taster1 = 27800;
   if(br_prekida_tajmera > 250) br_prekida_tajmera = 248;
   if(br_prekida_tajmera_auto_kazaljka > 250) br_prekida_tajmera_auto_kazaljka = 248;
 
-  br_debouncing_taster2++;
+  br_debouncing_taster2 += 1;
   if(br_debouncing_taster2 > 28000) br_debouncing_taster2 = 27800;
+   br_debouncing_taster3 += 1;
+  if(br_debouncing_taster3 > 28000) br_debouncing_taster3 = 27800;
+  br_od_starta += 1;
+  if(br_od_starta > 28000) br_od_starta = 27800;
 
 }
 
@@ -371,8 +424,8 @@ void vremenski_pomak(){
     v.sek = 0U;
     v.min += 1U;
 
-    rtc_clk_32k_enable(true);
-    rtc_clk_slow_freq_set(RTC_SLOW_FREQ_32K_XTAL);
+    //rtc_clk_32k_enable(true);
+   // rtc_clk_slow_freq_set(RTC_SLOW_FREQ_32K_XTAL);
 
     if(!u_toku_automatsko_podesavanje_sata){
       posalji_impuls_kazaljka();
@@ -419,19 +472,40 @@ void vremenski_pomak(){
       }
     }
 
+    segmenti[0] = izdvoj_cifru_broja(v.sat, 1);
+    segmenti[1] = izdvoj_cifru_broja(v.sat, 2);
+    segmenti[2] = izdvoj_cifru_broja(v.min, 1);
+    segmenti[3] = izdvoj_cifru_broja(v.min, 2);
+    segmenti[0] = kodiraj_cifru(segmenti[0]);
+    segmenti[1] = kodiraj_cifru(segmenti[1]);
+    segmenti[2] = kodiraj_cifru(segmenti[2]);
+    segmenti[3] = kodiraj_cifru(segmenti[3]);
+    segmenti[1] |= 0x80;  // dvotacka
+    displej.setSegments(segmenti);
+
     Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
     Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));  
 
+    if(v.sat == sinhronizacija_sati && v.min == sinhronizacija_min && !sinhronizovan && br_pokusaja_sinhronizacije <= 5){   // jednom dnevno sinhronizacija sa internetom
+      sinhronizacija_internet();
+      br_pokusaja_sinhronizacije += 1;
+    }
+
+    if(v.sat == 0 && v.min == 0){ // novi dan, trebace nova sinhronizacija
+      br_pokusaja_sinhronizacije = 0;
+      sinhronizovan = false;
+    }
+
     if(v.sat >= 5 && v.sat <= 21){   //   5-22h
       dnevni_rezim = true;
-      for(uint8_t i = 0; i < BROJ_SINHRONIZACIJA_U_SATU; i++){
+      for(uint8_t i = 0; i < BROJ_SINHRONIZACIJA_U_SATU; i++){      // redovne sinhronizacije sa spoljnim kolom
         if((v.min == vreme_sync[i])){
           sinhronizacija();
         }
       }
     }
     else{
-      WiFi.mode(WIFI_OFF);      
+      WiFi.mode(WIFI_OFF);
       dnevni_rezim = false;
       if(v.min == 2 || v.min == 32){
         sinhronizacija();
@@ -462,6 +536,16 @@ void vremenski_pomak(){
 }
 
 void sinhronizacija(){
+  DateTime datum = vreme_externo_kolo.now();
+  v.sek = datum.second();      //sinhronizacija iz externog kola
+  v.min = datum.minute();
+  v.sat = datum.hour();
+  v.dan = datum.day();
+  v.mesec = datum.month();
+  v.god = datum.year();
+}
+
+void sinhronizacija_internet(){
   sinhronizacija_u_toku = true;
   WiFi.mode(WIFI_STA);      // pri povezivanju na ruter, prelazi u rezim WiFi stanice
   delay(100U);
@@ -498,33 +582,33 @@ void sinhronizacija(){
       status_sistema = STATUS_WARNING_TIME_NOT_CORRECTED;
     }
     DateTime datum = vreme_externo_kolo.now();
-    v.sek = datum.second();      // nakon dobijenih info, osvezavanje vremena (korekcija)
+    v.sek = datum.second();      // ako je povezivanje na internet neuspesno, sinhronizacija iz externog kola
     v.min = datum.minute();
     v.sat = datum.hour();
     v.dan = datum.day();
     v.mesec = datum.month();
     v.god = datum.year();
+    Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
+    Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
   }
   else{     // uspesno
     v.sek = 0U;
     v.min = 0U;
     v.sat = 0U;
-    //DateTime datum = vreme_externo_kolo.now();
-    v.sek = timeinfo.tm_sec;      // propala sinhronizacija, uzimanje vremena iz RTC
+    v.sek = timeinfo.tm_sec;      // uspesna sinhronizacija, uzimanje vremena iz RTC u koji je upisano vreme dobijeno sa interneta
     v.min = timeinfo.tm_min;
     v.sat = timeinfo.tm_hour;
     v.dan = timeinfo.tm_mday;
-    //v.dan_u_nedelji = timeinfo.tm_wday;
+    v.dan_u_nedelji = timeinfo.tm_wday;
     v.mesec = timeinfo.tm_mon;
     v.god = timeinfo.tm_year;
     sinhronizovan = true;
     status_sistema = STATUS_OK;
+    DateTime dt(v.god, v.mesec, v.dan, v.sat, v.min, v.sek);  
+    vreme_externo_kolo.adjust(dt);    // osvezavanje vremena u memoriji externog kola
     Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
     Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
   }
-  const DateTime vreme_datum(v.god, v.mesec, v.dan, v.sat, v.min, v.sek);
- // vreme_externo_kolo.adjust(ref(vreme_datum));
- // vreme_externo_kolo.adjust(DateTime(v.god, v.mesec, v.dan, v.sat, v.min, v.sek));
   WiFi.disconnect(true, true);
   delay(100U);
   sinhronizacija_u_toku = false;
@@ -556,7 +640,7 @@ void posalji_impuls_kazaljka(){
 }
 
 void upali_zvono(){
-  digitalWrite(PIN_ZVONO, LOW);
+  digitalWrite(PIN_ZVONO_OUT, LOW);
   Serial.println("Zvonim: " + String(v.sat) + ":" + String(v.min));
 }
 void posalji_stanje_WiFi(){
@@ -711,6 +795,7 @@ void obrada_stringa(String str){      // obradjivanje svih ulaznih poruka
     upisiPodatak(72, ukljuceno_automatsko_zvono, 1);
   }
   else if(str[0] == 'h'){         // raspored zvona u toku dana
+
       char delimiter_zvona = '_';
       char delimiter_sat_min = ':';
 
@@ -770,10 +855,99 @@ void obrada_stringa(String str){      // obradjivanje svih ulaznih poruka
       }
       
     }
-    else if(str[0] == 'i'){     // test
-      String str = String(v.sat) + ":" + String(v.min) + ".";
-      client.println(str);
+  else if(str[0] == 'i'){     // test
+    String str = String(v.sat) + ":" + String(v.min) + ".";
+  //     client.println(str);
+  }
+
+  else if(str[0] == 'j'){ // sinhronizuj
+    int i = 1;
+    String sat_str = "";
+    String min_str = "";
+    String sek_str = "";
+    String god_str = "";
+    String mesec_str = "";
+    String dan_str = "";
+    bool sat_obrada = true;
+    bool min_obrada = false;
+    bool sek_obrada = false;
+    bool god_obrada = false;
+    bool mesec_obrada = false;
+    bool dan_obrada = false;
+    uint8_t sat = 0;
+    uint8_t min = 0;
+    uint8_t sek = 0;
+    uint16_t god = 0;
+    uint8_t mesec = 0;
+    uint8_t dan = 0;
+    int j = 0;
+    /*
+    while(str[i] != ':'){
+      sat_str += str[i];
+      i += 1;
+    }*/
+    // sat = (uint8_t)sat_str.toInt();
+    while(str[i] != '_'){
+      while(str[i] != ':'){
+        if(sat_obrada){ sat_str += str[i];}
+        if(min_obrada){ min_str += str[i];}
+        if(sek_obrada){ sek_str += str[i];}
+        if(god_obrada){ god_str += str[i];}
+        if(mesec_obrada){ mesec_str += str[i];}
+        if(dan_obrada){ dan_str += str[i];}
+        i += 1;
+      }
+      if(sat_obrada) {
+        sat_obrada = false; 
+        min_obrada = true;
+      }
+      else if(min_obrada) {
+        min_obrada = false; 
+        sek_obrada = true;
+      }
+      else if(sek_obrada) {
+        sek_obrada = false; 
+        god_obrada = true;
+      }
+      else if(god_obrada) {
+        god_obrada = false; 
+        mesec_obrada = true;
+      }
+      else if(mesec_obrada) {
+        mesec_obrada = false; 
+        dan_obrada = true;
+      }
+
+      i += 1;
     }
+
+    min = (uint8_t)min_str.toInt();
+    sat = (uint8_t)sat_str.toInt();
+    sek = (uint8_t)sek_str.toInt();
+    god = (uint16_t)god_str.toInt();
+    mesec = (uint8_t)mesec_str.toInt();
+    dan = (uint8_t)dan_str.toInt();
+    v.sat = sat;
+    v.min = min;
+    v.sek = sek;
+    v.god = god;
+    v.mesec = mesec;
+    v.dan = dan;
+
+    DateTime dt(v.god, v.mesec, v.dan, v.sat, v.min, v.sek);  
+    vreme_externo_kolo.adjust(dt);    // osvezavanje vremena u memoriji externog kola
+
+    Serial.println(String(sat));
+    Serial.println(String(min));
+    Serial.println(String(sek));
+    Serial.println(String(god));
+    Serial.println(String(mesec));
+    Serial.println(String(dan));
+
+  }
+
+  
+  
   }
 
 
@@ -867,7 +1041,22 @@ int duzina_char_stringa(char str[]){
   return i;
 }
   
+uint8_t izdvoj_cifru_broja(uint8_t broj, uint8_t indeks){
+  uint8_t cifra = 0;
+  if(indeks == 1){
+    broj /= 10;
+    cifra = broj % 10;
+  }
+  else if(indeks == 2){
+    cifra = broj % 10;
+  }
+  //Serial.println(cifra);
+  return cifra;
+}
 
+uint8_t kodiraj_cifru(uint8_t cifra){
+  return digitToSegment[cifra & 0x0f];
+}
 
 void IRAM_ATTR onTimer0(){
   //portENTER_CRITICAL_ISR(&timerMux0);
@@ -885,8 +1074,21 @@ void IRAM_ATTR onTimer1(){
   portEXIT_CRITICAL_ISR(&timerMux1);
 }
 
-
-
+void IRAM_ATTR handleExternalTaster1(){
+  portENTER_CRITICAL_ISR(&muxTaster1);
+  if(br_od_starta > START_DELAY) {prekid_tastera1 = true;}
+  portEXIT_CRITICAL_ISR(&muxTaster1);
+}
+void IRAM_ATTR handleExternalTaster2(){
+  portENTER_CRITICAL_ISR(&muxTaster2);
+  prekid_tastera2 = true;
+  portEXIT_CRITICAL_ISR(&muxTaster2);
+}
+void IRAM_ATTR handleExternalTaster3(){
+  portENTER_CRITICAL_ISR(&muxTaster3);
+  prekid_tastera3 = true;
+  portEXIT_CRITICAL_ISR(&muxTaster3);
+}
 
 /*
   MAPA MEMORIJE:
