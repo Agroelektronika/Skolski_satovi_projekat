@@ -30,8 +30,8 @@
 using namespace std;
 
 // izlazni
-#define PIN_KAZALJKA1 33  // 2 pina za teranje kazaljki, naizmenicno menjanje njihovih stanja za pokretanje kazaljke
-#define PIN_KAZALJKA2 12
+#define PIN_KAZALJKA1 0  // 2 pina za teranje kazaljki, naizmenicno menjanje njihovih stanja za pokretanje kazaljke
+#define PIN_KAZALJKA2 1
 #define PIN_ZVONO_OUT 21    
 
 // ulazni
@@ -39,7 +39,7 @@ using namespace std;
 #define PIN_ZVONO_IN 3   // zvono
 #define PIN_SYNC 2  // sinhronizacija
  
- // DS3231 RTC Pins
+ // DS3231 RTC modul Pinovi
 #define I2C_SDA 26
 #define I2C_SCL 27
 
@@ -52,6 +52,8 @@ TM1637Display displej(CLK_PIN, DIO_PIN);  //7SEG displej
 #define MAX_DUZINA 25
 #define MAX_DUZINA_SSID 32
 #define MAX_DUZINA_PASSWORD 64
+#define UPALI_ZVONO HIGH
+#define UGASI_ZVONO LOW
 
 #define BR_POKUSAJA_POVEZIVANJA 20
 #define DEBOUNCING_INTERVAL1 10000    // preciznije saltanje kazaljke, sporije, u blizini odredjene minute
@@ -59,6 +61,7 @@ TM1637Display displej(CLK_PIN, DIO_PIN);  //7SEG displej
 #define TIMEOUT_POVEZIVANJE 40U   // interval povezivanja, ako premasi, restart
 #define BROJ_SINHRONIZACIJA_U_SATU 23
 #define START_DELAY 18000
+#define OSVETLJENJE_DISPLEJA 255
 
 #define STATUS_OK 0   // sve je u redu
 #define STATUS_ERR_UNKNOWN_TIME 1 // neuspelo povezivanje pri paljenju sistema, ne zna vreme
@@ -230,7 +233,7 @@ void setup() {
   digitalWrite(PIN_KAZALJKA2, HIGH);
 
   pinMode(PIN_ZVONO_OUT, OUTPUT);   
-  digitalWrite(PIN_ZVONO_OUT, HIGH);    // HIGH je iskljuceno zvono, LOW je ukljuceno
+  digitalWrite(PIN_ZVONO_OUT, UGASI_ZVONO);    // HIGH je iskljuceno zvono, LOW je ukljuceno
 
   v.sek = 0U;
   v.min = 0U;
@@ -258,26 +261,19 @@ void setup() {
   //  while(1){}
   }
   sinhronizacija();
-
-  //vreme_externo_kolo.disable32K();
- // DateTime dt(v.god, v.mesec, v.dan, v.sat, v.min, v.sek);
- // vreme_externo_kolo.adjust(dt);
+  
   delay(1000U);
- /* DateTime datum = vreme_externo_kolo.now();
-  v.sek = datum.second();      // nakon dobijenih info, osvezavanje vremena (korekcija)
-  v.min = datum.minute();
-  v.sat = datum.hour();
-  v.dan = datum.day();*/
-
+ 
   Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
   Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
 
  // vreme_externo_kolo.adjust(DateTime(F(__DATE__), F(__TIME__)));
-  /*  if(vreme_externo_kolo.lostPower()) {
-        rtc.adjust(DateTime(F(__DATE__), F(__TIME__))); // postavljanje vremena pri kompilaciji
-    }*/
+  if(vreme_externo_kolo.lostPower()) {
+    sinhronizacija_internet();
+    Serial.println("sinhronizacija internet");
+  }
   //rtc.disable32K();
-  displej.setBrightness(0xff);
+  displej.setBrightness(OSVETLJENJE_DISPLEJA);
   segmenti[0] = izdvoj_cifru_broja(v.sat, 1);
   segmenti[1] = izdvoj_cifru_broja(v.sat, 2);
   segmenti[2] = izdvoj_cifru_broja(v.min, 1);
@@ -288,12 +284,7 @@ void setup() {
   segmenti[3] = kodiraj_cifru(segmenti[3]);
   segmenti[1] |= 0x80;  // dvotacka
   displej.setSegments(segmenti);
- // displej.showDots();
-
- // rtc_clk_32k_enable(true);
-  //  rtc_clk_slow_freq_set(RTC_SLOW_FREQ_32K_XTAL);
-
-  //  Serial.println(rtc_clk_slow_freq_get());
+ 
   delay(500U);
 
 }
@@ -328,35 +319,17 @@ void loop() {
   vremenski_pomak();
   
   if(prekid_tajmera){   // prosla 1sec
-   // Serial.println(String(v.dan) + "." + String(v.mesec) + "." + String(v.god));
-   // Serial.println(String(v.sat) + ":" + String(v.min) + ":" + String(v.sek));
-
-    //DateTime datum = vreme_externo_kolo.now();
-
-    //Serial.println(String(datum.year()));
 
     if(br_prekida_tajmera > 4){
       digitalWrite(PIN_KAZALJKA1, LOW);   // nakon kraceg intervala od pocetka minute, oba pina staviti na LOW zbog ustede
       digitalWrite(PIN_KAZALJKA2, LOW);
-      digitalWrite(PIN_ZVONO_OUT, HIGH);    // ugasiti zvono
+      digitalWrite(PIN_ZVONO_OUT, UGASI_ZVONO);    // ugasiti zvono
     }
 
     if(!sinhronizacija_u_toku){
       v.sek += 1;
     }
-   /* else if(sinhronizacija_u_toku){
-      rucni_watchdog += 1U;
-      if(rucni_watchdog > TIMEOUT_POVEZIVANJE){     // 30sec za povezivanje, ako premasi
-        WiFi.mode(WIFI_OFF);
-        delay(100U);
-        sinhronizacija();
-      }
-    }
-  */
-    if(pritisnut_taster_zvono){
-      br_sek_taster_zvono_pritisnut += 1;
-    }
-
+   
     prekid_tajmera = false;
   }
 
@@ -390,17 +363,7 @@ void loop() {
     br_debouncing_taster3 = 0;
     prekid_tastera3 = false;
   }
-  /*  else if(digitalRead(PIN_TASTER2) == HIGH){
-    br_sek_taster_zvono_pritisnut = 0;
-    pritisnut_taster_zvono = false;
-  }*/
 
- /* if(digitalRead(PIN_TASTER2) == LOW && br_debouncing_taster2 > DEBOUNCING_INTERVAL2){
-    Serial.println("pritisak tastera 2");
-    brojac_prekida += 1;
-    posalji_impuls();
-    br_debouncing_taster2 = 0;
-  }*/
 
   br_debouncing_taster1 += 1;
   if(br_debouncing_taster1 > 28000) br_debouncing_taster1 = 27800;
@@ -497,18 +460,18 @@ void vremenski_pomak(){
     }
 
     if(v.sat >= 5 && v.sat <= 21){   //   5-22h
+      if(!dnevni_rezim) { displej.setBrightness(OSVETLJENJE_DISPLEJA); }
       dnevni_rezim = true;
+      
+    }
+    else{
+      WiFi.mode(WIFI_OFF);
+      if(dnevni_rezim) { displej.setBrightness(OSVETLJENJE_DISPLEJA / 5); }
+      dnevni_rezim = false;
       for(uint8_t i = 0; i < BROJ_SINHRONIZACIJA_U_SATU; i++){      // redovne sinhronizacije sa spoljnim kolom
         if((v.min == vreme_sync[i])){
           sinhronizacija();
         }
-      }
-    }
-    else{
-      WiFi.mode(WIFI_OFF);
-      dnevni_rezim = false;
-      if(v.min == 2 || v.min == 32){
-        sinhronizacija();
       }
     }
 
@@ -640,7 +603,7 @@ void posalji_impuls_kazaljka(){
 }
 
 void upali_zvono(){
-  digitalWrite(PIN_ZVONO_OUT, LOW);
+  digitalWrite(PIN_ZVONO_OUT, UPALI_ZVONO);
   Serial.println("Zvonim: " + String(v.sat) + ":" + String(v.min));
 }
 void posalji_stanje_WiFi(){
@@ -714,237 +677,239 @@ void provera_string_ruter(String str, char ssid[], char password[]){
 
 void obrada_stringa(String str){      // obradjivanje svih ulaznih poruka
 
-  if(str[0] == 'a'){        // pali zvono
-    br_prekida_tajmera = 0U;
-    upali_zvono();
-  }
-  else if(str[0] == 'b'){         // vrati status sistema
-    posalji_stanje_WiFi();
-  }
-  else if(str[0] == 'c'){       // pomeri kazaljku za +1
-    posalji_impuls_kazaljka();
-  }
-  else if(str[0] == 'd'){       // automatsko namestanje sata, prima se info na koliko sat stoji 
-    uint8_t blokada_sati = 0;
-    uint8_t blokada_min = 0;
-    provera_string_sati(str, &blokada_sati, &blokada_min);
-    if(blokada_sati > 12){
-      blokada_sati -= 12;
+    if(str[0] == 'a'){        // pali zvono
+      br_prekida_tajmera = 0U;
+      upali_zvono();
+    }
+    else if(str[0] == 'b'){         // vrati status sistema
+      posalji_stanje_WiFi();
+    }
+    else if(str[0] == 'c'){       // pomeri kazaljku za +1
+      posalji_impuls_kazaljka();
+    }
+    else if(str[0] == 'd'){       // automatsko namestanje sata, prima se info na koliko sat stoji 
+      uint8_t blokada_sati = 0;
+      uint8_t blokada_min = 0;
+      provera_string_sati(str, &blokada_sati, &blokada_min);
+      if(blokada_sati > 12){
+        blokada_sati -= 12;
+      }
+
+      int16_t vreme_zastoja_min = (blokada_sati * 60U) + blokada_min;
+      
+      uint8_t trenutno_vreme_sat = v.sat;
+      if(trenutno_vreme_sat > 12){
+        trenutno_vreme_sat -= 12;
+      }
+      int16_t trenutno_vreme_min = (trenutno_vreme_sat * 60U) + v.min;
+      Serial.println("trenutno vreme min " + String(trenutno_vreme_min));
+      Serial.println("zastoj vreme min " + String(vreme_zastoja_min));
+      int16_t razlika_min = trenutno_vreme_min - vreme_zastoja_min;
+      Serial.println("razlika " + String(razlika_min));
+      if(razlika_min < 0) {
+        razlika_min *= (-1);
+      }
+      Serial.println("razlika " + String(razlika_min));
+      if(trenutno_vreme_min > vreme_zastoja_min){
+          poteraj_kazaljku_automatski_br_min = razlika_min;
+      }
+      else{
+        poteraj_kazaljku_automatski_br_min = 720 - razlika_min;
+      }
+      Serial.println("Teraj " + String(poteraj_kazaljku_automatski_br_min));
+
+      timerAlarmEnable(timer1);
+      u_toku_automatsko_podesavanje_sata = true;
+    }
+    else if(str[0] == 'e'){       // vreme povezivanja na internet ruter za dobijane preciznije info o trenutnom vremenu
+      uint8_t sati = 0;
+      uint8_t min = 0;
+      provera_string_sati(str, &sati, &min);
+      sinhronizacija_sati = sati;
+      sinhronizacija_min = min;
+      upisiPodatak(73, sinhronizacija_sati, 1);
+      upisiPodatak(74, sinhronizacija_min, 1);
+    }
+    else if(str[0] == 'f'){     // SSID i Lozinka internet rutera
+      provera_string_ruter(str, ssid_STA, password_STA);
+      int duzina_ssid = duzina_char_stringa(ssid_STA);
+      upisiPodatak(75, (uint8_t)duzina_ssid, 1);
+      int j = 76;
+      for(int i = 0; i < duzina_ssid; i++){
+        upisiPodatak(j, ssid_STA[i], 1);
+        j += 1;
+      }
+
+      int duzina_password = duzina_char_stringa(password_STA);
+      upisiPodatak(109, (uint8_t)duzina_password, 1);
+      j = 110;
+      for(int i = 0; i < duzina_password; i++){
+        upisiPodatak(j, password_STA[i], 1);
+        j += 1;
+      }
+    }
+    else if(str[0] == 'g'){     // ukljuci/iskljuci automatsko zvono
+      if(str[1] == '0'){
+        ukljuceno_automatsko_zvono = false;
+      }
+      else if(str[1] == '1'){
+        ukljuceno_automatsko_zvono = true;
+      }
+      upisiPodatak(72, ukljuceno_automatsko_zvono, 1);
+    }
+    else if(str[0] == 'h'){         // raspored zvona u toku dana
+
+        char delimiter_zvona = '_';
+        char delimiter_sat_min = ':';
+
+        raspored_zvona_sati.clear();
+        raspored_zvona_min.clear();
+
+
+        int i = 1;
+        bool odradjen_sat = false;
+        String sat_str = "";
+        String min_str = "";
+        uint8_t sat = 0;
+        uint8_t min = 0;
+        while(i < str.length()){
+          int j = 0;
+          
+          while(str[i] != ':' && !odradjen_sat){
+            sat_str += str[i];
+            i += 1;
+          }
+          i += 1;
+          odradjen_sat = true;
+          sat = (uint8_t)sat_str.toInt();
+          raspored_zvona_sati.push_back(sat);
+          while(str[i] != '_' && odradjen_sat){
+            min_str += str[i];
+            i += 1;
+          }
+
+          odradjen_sat = false;
+          
+          min = (uint8_t)min_str.toInt();
+          raspored_zvona_min.push_back(min);
+          sat_str = "";
+          min_str = "";
+          i += 1;
+        }
+        vector<uint8_t>::iterator it;
+        for(it = raspored_zvona_sati.begin(); it != raspored_zvona_sati.end(); it++){
+          Serial.println(*it);
+        }
+        for(it = raspored_zvona_min.begin(); it != raspored_zvona_min.end(); it++){
+          Serial.println(*it);
+        }
+
+        upisiPodatak(0, (uint8_t)raspored_zvona_sati.size(), 1);
+        int j = 1;
+        for(it = raspored_zvona_sati.begin(); it != raspored_zvona_sati.end(); it++){
+          upisiPodatak(j, *it, 1);
+          j += 1;
+        }
+        upisiPodatak(36, (uint8_t)raspored_zvona_min.size(), 1);
+        j = 37;
+        for(it = raspored_zvona_min.begin(); it != raspored_zvona_min.end(); it++){
+          upisiPodatak(j, *it, 1);
+          j += 1;
+        }
+        
+      }
+    else if(str[0] == 'i'){     // test
+      String str = String(v.sat) + ":" + String(v.min) + ".";
+    //     client.println(str);
     }
 
-    int16_t vreme_zastoja_min = (blokada_sati * 60U) + blokada_min;
-    
-    uint8_t trenutno_vreme_sat = v.sat;
-    if(trenutno_vreme_sat > 12){
-      trenutno_vreme_sat -= 12;
-    }
-    int16_t trenutno_vreme_min = (trenutno_vreme_sat * 60U) + v.min;
-    Serial.println("trenutno vreme min " + String(trenutno_vreme_min));
-    Serial.println("zastoj vreme min " + String(vreme_zastoja_min));
-    int16_t razlika_min = trenutno_vreme_min - vreme_zastoja_min;
-    Serial.println("razlika " + String(razlika_min));
-    if(razlika_min < 0) {
-      razlika_min *= (-1);
-    }
-    Serial.println("razlika " + String(razlika_min));
-    if(trenutno_vreme_min > vreme_zastoja_min){
-        poteraj_kazaljku_automatski_br_min = razlika_min;
-    }
-    else{
-      poteraj_kazaljku_automatski_br_min = 720 - razlika_min;
-    }
-    Serial.println("Teraj " + String(poteraj_kazaljku_automatski_br_min));
-
-    timerAlarmEnable(timer1);
-    u_toku_automatsko_podesavanje_sata = true;
-  }
-  else if(str[0] == 'e'){       // vreme povezivanja na internet ruter za dobijane preciznije info o trenutnom vremenu
-    uint8_t sati = 0;
-    uint8_t min = 0;
-    provera_string_sati(str, &sati, &min);
-    sinhronizacija_sati = sati;
-    sinhronizacija_min = min;
-    upisiPodatak(73, sinhronizacija_sati, 1);
-    upisiPodatak(74, sinhronizacija_min, 1);
-  }
-  else if(str[0] == 'f'){     // SSID i Lozinka internet rutera
-    provera_string_ruter(str, ssid_STA, password_STA);
-    int duzina_ssid = duzina_char_stringa(ssid_STA);
-    upisiPodatak(75, (uint8_t)duzina_ssid, 1);
-    int j = 76;
-    for(int i = 0; i < duzina_ssid; i++){
-      upisiPodatak(j, ssid_STA[i], 1);
-      j += 1;
-    }
-
-    int duzina_password = duzina_char_stringa(password_STA);
-    upisiPodatak(109, (uint8_t)duzina_password, 1);
-    j = 110;
-    for(int i = 0; i < duzina_password; i++){
-      upisiPodatak(j, password_STA[i], 1);
-      j += 1;
-    }
-  }
-  else if(str[0] == 'g'){     // ukljuci/iskljuci automatsko zvono
-    if(str[1] == '0'){
-      ukljuceno_automatsko_zvono = false;
-    }
-    else if(str[1] == '1'){
-      ukljuceno_automatsko_zvono = true;
-    }
-    upisiPodatak(72, ukljuceno_automatsko_zvono, 1);
-  }
-  else if(str[0] == 'h'){         // raspored zvona u toku dana
-
-      char delimiter_zvona = '_';
-      char delimiter_sat_min = ':';
-
-      raspored_zvona_sati.clear();
-      raspored_zvona_min.clear();
-
-
+    else if(str[0] == 'j'){ // sinhronizuj
       int i = 1;
-      bool odradjen_sat = false;
       String sat_str = "";
       String min_str = "";
+      String sek_str = "";
+      String god_str = "";
+      String mesec_str = "";
+      String dan_str = "";
+      bool sat_obrada = true;
+      bool min_obrada = false;
+      bool sek_obrada = false;
+      bool god_obrada = false;
+      bool mesec_obrada = false;
+      bool dan_obrada = false;
       uint8_t sat = 0;
       uint8_t min = 0;
-      while(i < str.length()){
-        int j = 0;
-        
-        while(str[i] != ':' && !odradjen_sat){
-          sat_str += str[i];
-          i += 1;
-        }
-        i += 1;
-        odradjen_sat = true;
-        sat = (uint8_t)sat_str.toInt();
-        raspored_zvona_sati.push_back(sat);
-        while(str[i] != '_' && odradjen_sat){
-          min_str += str[i];
-          i += 1;
-        }
-
-        odradjen_sat = false;
-        
-        min = (uint8_t)min_str.toInt();
-        raspored_zvona_min.push_back(min);
-        sat_str = "";
-        min_str = "";
-        i += 1;
-      }
-      vector<uint8_t>::iterator it;
-      for(it = raspored_zvona_sati.begin(); it != raspored_zvona_sati.end(); it++){
-        Serial.println(*it);
-      }
-      for(it = raspored_zvona_min.begin(); it != raspored_zvona_min.end(); it++){
-        Serial.println(*it);
-      }
-
-      upisiPodatak(0, (uint8_t)raspored_zvona_sati.size(), 1);
-      int j = 1;
-      for(it = raspored_zvona_sati.begin(); it != raspored_zvona_sati.end(); it++){
-        upisiPodatak(j, *it, 1);
-        j += 1;
-      }
-      upisiPodatak(36, (uint8_t)raspored_zvona_min.size(), 1);
-      j = 37;
-      for(it = raspored_zvona_min.begin(); it != raspored_zvona_min.end(); it++){
-        upisiPodatak(j, *it, 1);
-        j += 1;
-      }
-      
-    }
-  else if(str[0] == 'i'){     // test
-    String str = String(v.sat) + ":" + String(v.min) + ".";
-  //     client.println(str);
-  }
-
-  else if(str[0] == 'j'){ // sinhronizuj
-    int i = 1;
-    String sat_str = "";
-    String min_str = "";
-    String sek_str = "";
-    String god_str = "";
-    String mesec_str = "";
-    String dan_str = "";
-    bool sat_obrada = true;
-    bool min_obrada = false;
-    bool sek_obrada = false;
-    bool god_obrada = false;
-    bool mesec_obrada = false;
-    bool dan_obrada = false;
-    uint8_t sat = 0;
-    uint8_t min = 0;
-    uint8_t sek = 0;
-    uint16_t god = 0;
-    uint8_t mesec = 0;
-    uint8_t dan = 0;
-    int j = 0;
-    /*
-    while(str[i] != ':'){
-      sat_str += str[i];
-      i += 1;
-    }*/
-    // sat = (uint8_t)sat_str.toInt();
-    while(str[i] != '_'){
+      uint8_t sek = 0;
+      uint16_t god = 0;
+      uint8_t mesec = 0;
+      uint8_t dan = 0;
+      int j = 0;
+      /*
       while(str[i] != ':'){
-        if(sat_obrada){ sat_str += str[i];}
-        if(min_obrada){ min_str += str[i];}
-        if(sek_obrada){ sek_str += str[i];}
-        if(god_obrada){ god_str += str[i];}
-        if(mesec_obrada){ mesec_str += str[i];}
-        if(dan_obrada){ dan_str += str[i];}
+        sat_str += str[i];
+        i += 1;
+      }*/
+      // sat = (uint8_t)sat_str.toInt();
+      while(str[i] != '_'){
+        while(str[i] != ':'){
+          if(sat_obrada){ sat_str += str[i];}
+          if(min_obrada){ min_str += str[i];}
+          if(sek_obrada){ sek_str += str[i];}
+          if(god_obrada){ god_str += str[i];}
+          if(mesec_obrada){ mesec_str += str[i];}
+          if(dan_obrada){ dan_str += str[i];}
+          i += 1;
+        }
+        if(sat_obrada) {
+          sat_obrada = false; 
+          min_obrada = true;
+        }
+        else if(min_obrada) {
+          min_obrada = false; 
+          sek_obrada = true;
+        }
+        else if(sek_obrada) {
+          sek_obrada = false; 
+          god_obrada = true;
+        }
+        else if(god_obrada) {
+          god_obrada = false; 
+          mesec_obrada = true;
+        }
+        else if(mesec_obrada) {
+          mesec_obrada = false; 
+          dan_obrada = true;
+        }
+
         i += 1;
       }
-      if(sat_obrada) {
-        sat_obrada = false; 
-        min_obrada = true;
-      }
-      else if(min_obrada) {
-        min_obrada = false; 
-        sek_obrada = true;
-      }
-      else if(sek_obrada) {
-        sek_obrada = false; 
-        god_obrada = true;
-      }
-      else if(god_obrada) {
-        god_obrada = false; 
-        mesec_obrada = true;
-      }
-      else if(mesec_obrada) {
-        mesec_obrada = false; 
-        dan_obrada = true;
-      }
 
-      i += 1;
+      min = (uint8_t)min_str.toInt();
+      sat = (uint8_t)sat_str.toInt();
+      sek = (uint8_t)sek_str.toInt();
+      god = (uint16_t)god_str.toInt();
+      mesec = (uint8_t)mesec_str.toInt();
+      mesec += 1;
+      dan = (uint8_t)dan_str.toInt();
+      v.sat = sat;
+      v.min = min;
+      v.sek = sek;
+      v.god = god;
+      v.mesec = mesec;
+      v.dan = dan;
+
+      DateTime dt(v.god, v.mesec, v.dan, v.sat, v.min, v.sek);  
+      vreme_externo_kolo.adjust(dt);    // osvezavanje vremena u memoriji externog kola
+      status_sistema = STATUS_OK;
+
+      Serial.println(String(sat));
+      Serial.println(String(min));
+      Serial.println(String(sek));
+      Serial.println(String(god));
+      Serial.println(String(mesec));
+      Serial.println(String(dan));
+
     }
-
-    min = (uint8_t)min_str.toInt();
-    sat = (uint8_t)sat_str.toInt();
-    sek = (uint8_t)sek_str.toInt();
-    god = (uint16_t)god_str.toInt();
-    mesec = (uint8_t)mesec_str.toInt();
-    dan = (uint8_t)dan_str.toInt();
-    v.sat = sat;
-    v.min = min;
-    v.sek = sek;
-    v.god = god;
-    v.mesec = mesec;
-    v.dan = dan;
-
-    DateTime dt(v.god, v.mesec, v.dan, v.sat, v.min, v.sek);  
-    vreme_externo_kolo.adjust(dt);    // osvezavanje vremena u memoriji externog kola
-
-    Serial.println(String(sat));
-    Serial.println(String(min));
-    Serial.println(String(sek));
-    Serial.println(String(god));
-    Serial.println(String(mesec));
-    Serial.println(String(dan));
-
-  }
 
   
   
@@ -1081,12 +1046,12 @@ void IRAM_ATTR handleExternalTaster1(){
 }
 void IRAM_ATTR handleExternalTaster2(){
   portENTER_CRITICAL_ISR(&muxTaster2);
-  prekid_tastera2 = true;
+  if(br_od_starta > START_DELAY){prekid_tastera2 = true;}
   portEXIT_CRITICAL_ISR(&muxTaster2);
 }
 void IRAM_ATTR handleExternalTaster3(){
   portENTER_CRITICAL_ISR(&muxTaster3);
-  prekid_tastera3 = true;
+  if(br_od_starta > START_DELAY){prekid_tastera3 = true;}
   portEXIT_CRITICAL_ISR(&muxTaster3);
 }
 
