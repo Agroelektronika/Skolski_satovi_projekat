@@ -200,7 +200,7 @@ uint8_t kodiraj_cifru(uint8_t cifra);
 
 void setup() {
 
-  delay(1000U);
+  //delay(1000U);
   setCpuFrequencyMhz(80);   // najniza brzina radnog takta
   
   Serial.begin(115200);
